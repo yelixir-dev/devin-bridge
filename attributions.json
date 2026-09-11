@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-09-11",
+  "projectLicense": "to be declared",
+  "items": [
+    {
+      "id": "oh-my-pi-devin-wire",
+      "name": "Oh My Pi — Devin wire declarations and protobuf codec",
+      "repository": "https://github.com/can1357/oh-my-pi",
+      "revision": "3b3a6dc9bbd85102ce19d0b1c11bf6870915f6ec",
+      "license": "MIT",
+      "licenseFile": "prototype/vendor/LICENSE",
+      "copyright": [
+        "Copyright (c) 2025 Mario Zechner",
+        "Copyright (c) 2025-2026 Can Bölük",
+        "Copyright (c) 2026 Stencil Labs, Inc."
+      ],
+      "files": [
+        {
+          "local": "prototype/vendor/devin-proto.ts",
+          "upstream": "packages/catalog/src/discovery/devin-proto.ts",
+          "processing": "Verbatim protocol declarations."
+        },
+        {
+          "local": "prototype/vendor/protobuf.ts",
+          "upstream": "packages/catalog/src/discovery/protobuf.ts",
+          "processing": "Inline isRecord instead of importing pi-utils; guard indexed reads and use Object.entries for strict noUncheckedIndexedAccess."
+        },
+        {
+          "local": "prototype/src/chat-request.ts",
+          "upstream": "packages/catalog/src/wire/devin.ts",
+          "processing": "Client metadata constants are adapted; request assembly is local."
+        }
+      ],
+      "excluded": "No upstream agent framework, provider implementation, or model-routing policy is included."
+    }
+  ]
+}

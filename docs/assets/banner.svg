@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="300" viewBox="0 0 1200 300" role="img" aria-labelledby="title description">
+  <title id="title">devin-bridge</title>
+  <desc id="description">Direct Connect RPC inference through a local text API. JSON and SSE, 20 tests, no silent model substitution.</desc>
+  <rect width="1200" height="300" fill="#28231f"/>
+  <rect x="14" y="14" width="1172" height="272" fill="none" stroke="#b57920" stroke-opacity=".45"/>
+  <path d="M252 62h76M872 62h76" stroke="#b57920" stroke-opacity=".7"/>
+  <text x="600" y="69" text-anchor="middle" fill="#b57920" font-family="Georgia, 'Times New Roman', serif" font-size="19" letter-spacing="5">LOCAL MODEL INFERENCE</text>
+  <text x="600" y="146" text-anchor="middle" fill="#fffdf8" font-family="Georgia, 'Times New Roman', serif" font-size="64" font-style="italic">devin-bridge</text>
+  <text x="600" y="190" text-anchor="middle" fill="#fffdf8" font-family="Georgia, 'Times New Roman', serif" font-size="20">Direct Connect RPC. No silent model substitution.</text>
+  <text x="600" y="226" text-anchor="middle" fill="#a89f93" font-family="Georgia, 'Times New Roman', serif" font-size="18">JSON + SSE text responses · 20 tests · local prototype</text>
+  <path d="M558 254h84" stroke="#9f4d2e" stroke-width="3"/>
+</svg>
