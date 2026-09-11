@@ -1,0 +1,22 @@
+# Agent state and private research
+.omo/
+.senpi/
+.pi/
+devin-bridge-plan.html
+prototype/NOTES.md
+prototype/evidence/
+
+# Dependencies and build output
+node_modules/
+dist/
+coverage/
+
+# Local credentials and runtime state
+.env
+.env.*
+!.env.example
+.local/
+credentials.json
+credentials.toml
+*.log
+.DS_Store
