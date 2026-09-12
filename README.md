@@ -114,10 +114,19 @@ benchmark. Set `stream` to `false` to receive one JSON completion instead.
 | `POST /v1/chat/completions` | Client Bearer key | Text and function-tool completion as JSON or SSE |
 
 Accepted request fields: `model`, `reasoning_effort`, `messages`, `stream`,
-`max_tokens`, `temperature`, `stop`, `n:1`, `stream_options.include_usage`,
-`tools`, `tool_choice`, and `parallel_tool_calls`. Text content remains string-only;
-assistant tool-call messages may have null/omitted content.
+`max_tokens`, `max_completion_tokens`, `temperature`, `stop`, `n:1`,
+`stream_options.include_usage`, `store: false`, `tools`, `tool_choice`, and
+`parallel_tool_calls`. Content may be a string or an array of `type: "text"`
+blocks; blocks are concatenated in order without changing whitespace.
+The `developer` role is supported alongside `system`, `user`, `assistant`, and
+`tool`. Assistant tool-call messages may have null/omitted content.
 Other fields are rejected with 400 rather than silently ignored.
+
+`max_completion_tokens` is an alias for `max_tokens`; both accept 1–65536.
+If both are supplied they must agree. If neither is supplied, the limit is 512.
+Image/audio blocks and `store: true` remain unsupported and return 400.
+This normalization lets OmO/pi-ai send its normal text-block messages without
+a client-side flattening workaround. Cache hints on text blocks are not forwarded.
 
 ### SWE-2 reasoning
 

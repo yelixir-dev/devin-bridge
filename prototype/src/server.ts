@@ -15,8 +15,8 @@ const server = Bun.serve({
     models,
     async *complete(input, signal) {
       const auth = await getUserJwt(token, baseUrl);
-      const system = input.messages.filter(m => m.role === "system").map(m => m.content).join("\n\n");
-      const messages = input.messages.filter(m => m.role !== "system").map((m): ChatParams["messages"][number] => {
+      const system = input.messages.filter(m => m.role === "system" || m.role === "developer").map(m => m.content).join("\n\n");
+      const messages = input.messages.filter(m => m.role !== "system" && m.role !== "developer").map((m): ChatParams["messages"][number] => {
         switch (m.role) {
           case "user": return { source: SOURCE.USER, text: m.content };
           case "assistant": return {

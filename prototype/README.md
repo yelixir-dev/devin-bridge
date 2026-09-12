@@ -30,9 +30,11 @@ curl -N http://127.0.0.1:8787/v1/chat/completions \
 
 Supported: `GET /health`, authenticated `GET /v1/models`, and text/function-tool
 `POST /v1/chat/completions` (JSON or SSE). Supported parameters are `model`,
-`reasoning_effort`, `messages` (`system`, `user`, `assistant`, `tool`), `stream`,
-`max_tokens`, `temperature`, `stop`, `n:1`, `stream_options.include_usage`,
-`tools`, `tool_choice`, and `parallel_tool_calls`.
+`reasoning_effort`, `messages` (`system`, `developer`, `user`, `assistant`, `tool`), `stream`,
+`max_tokens`, `max_completion_tokens`, `temperature`, `stop`, `n:1`, `stream_options.include_usage`,
+`store: false`, `tools`, `tool_choice`, and `parallel_tool_calls`.
+Content supports strings or text-block arrays, concatenated without whitespace changes.
+The two token-limit fields are aliases (1–65536); conflicting values return 400.
 Unsupported fields and images return 400 before inference.
 `swe-2` groups medium/high/max variants. `reasoning_effort` selects the exact
 variant; omission means high. Missing variants return 404, never another level.

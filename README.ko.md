@@ -112,10 +112,19 @@ OK
 | `POST /v1/chat/completions` | 클라이언트 Bearer 키 | JSON 또는 SSE 텍스트·함수 도구 응답 |
 
 허용하는 요청 필드는 `model`, `reasoning_effort`, `messages`, `stream`,
-`max_tokens`, `temperature`, `stop`, `n:1`, `stream_options.include_usage`,
-`tools`, `tool_choice`, `parallel_tool_calls`다. 텍스트 내용은 문자열만 지원하며,
+`max_tokens`, `max_completion_tokens`, `temperature`, `stop`, `n:1`,
+`stream_options.include_usage`, `store: false`, `tools`, `tool_choice`,
+`parallel_tool_calls`다. Content는 문자열 또는 `type: "text"` 블록 배열을
+받으며, 블록은 공백을 바꾸지 않고 순서대로 이어 붙인다.
+`system`, `user`, `assistant`, `tool`과 함께 `developer` 역할도 지원한다.
 도구를 호출하는 assistant 메시지는 content가 null이거나 생략될 수 있다.
 다른 필드는 조용히 무시하지 않고 400으로 거부한다.
+
+`max_completion_tokens`는 `max_tokens`의 별칭이며 두 필드 모두 1–65536을 받는다.
+둘 다 지정하면 값이 같아야 한다. 둘 다 없으면 한도는 512다.
+이미지·오디오 블록과 `store: true`는 여전히 미지원이며 400을 반환한다.
+OmO/pi-ai의 정상 텍스트 블록 요청은 클라이언트에서 평탄화할 필요가 없다.
+텍스트 블록의 캐시 힌트는 업스트림으로 전달하지 않는다.
 
 ### SWE-2 추론 수준
 

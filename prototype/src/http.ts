@@ -14,14 +14,22 @@ const toolCall = z.object({
   id: z.string().min(1), type: z.literal("function"),
   function: z.object({ name: toolName, arguments: z.string() }).strict(),
 }).strict();
+const textContent = z.union([
+  z.string(),
+  z.array(z.object({
+    type: z.literal("text"), text: z.string(),
+    cache_control: z.object({ type: z.literal("ephemeral") }).strict().optional(),
+  }).strict()).transform(parts => parts.map(part => part.text).join("")),
+]);
 const message = z.discriminatedUnion("role", [
-  z.object({ role: z.literal("system"), content: z.string() }).strict(),
-  z.object({ role: z.literal("user"), content: z.string() }).strict(),
+  z.object({ role: z.literal("system"), content: textContent }).strict(),
+  z.object({ role: z.literal("developer"), content: textContent }).strict(),
+  z.object({ role: z.literal("user"), content: textContent }).strict(),
   z.object({
-    role: z.literal("assistant"), content: z.string().nullable().optional(),
+    role: z.literal("assistant"), content: textContent.nullable().optional(),
     tool_calls: z.array(toolCall).min(1).optional(),
   }).strict().refine(m => typeof m.content === "string" || Boolean(m.tool_calls?.length)),
-  z.object({ role: z.literal("tool"), content: z.string(), tool_call_id: z.string().min(1) }).strict(),
+  z.object({ role: z.literal("tool"), content: textContent, tool_call_id: z.string().min(1) }).strict(),
 ]);
 const requestSchema = z.object({
   model: z.string().min(1),
@@ -40,12 +48,18 @@ const requestSchema = z.object({
   ]).optional(),
   parallel_tool_calls: z.boolean().optional(),
   stream: z.boolean().default(false),
-  max_tokens: z.number().int().min(1).max(65_536).default(512),
+  max_tokens: z.number().int().min(1).max(65_536).optional(),
+  max_completion_tokens: z.number().int().min(1).max(65_536).optional(),
+  store: z.literal(false).optional(),
   temperature: z.number().min(0).max(2).optional(),
   stop: z.union([z.string(), z.array(z.string()).max(4)]).optional(),
   n: z.literal(1).optional(),
   stream_options: z.object({ include_usage: z.boolean().optional() }).strict().optional(),
 }).strict().superRefine((input, context) => {
+  if (input.max_tokens !== undefined && input.max_completion_tokens !== undefined
+    && input.max_tokens !== input.max_completion_tokens) {
+    context.addIssue({ code: "custom", message: "Conflicting token limits", path: ["max_completion_tokens"] });
+  }
   const names = new Set((input.tools ?? []).map(t => t.function.name));
   if (names.size !== (input.tools?.length ?? 0)) {
     context.addIssue({ code: "custom", message: "Duplicate function names", path: ["tools"] });
@@ -67,12 +81,15 @@ const requestSchema = z.object({
         if (!pending.delete(m.tool_call_id)) context.addIssue({ code: "custom", message: "Unmatched tool result" });
         break;
       case "system":
+      case "developer":
       case "user": break;
       default: { const unhandled: never = m; throw unhandled; }
     }
   }
   if (pending.size) context.addIssue({ code: "custom", message: "Missing tool results" });
-});
+}).transform(({ max_completion_tokens, ...input }) => ({
+  ...input, max_tokens: input.max_tokens ?? max_completion_tokens ?? 512,
+}));
 export type ChatInput = z.infer<typeof requestSchema>;
 
 export interface Backend {
