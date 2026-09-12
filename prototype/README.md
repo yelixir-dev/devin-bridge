@@ -54,7 +54,12 @@ JSON and inconsistent native-tool termination fail with `invalid_tool_call`
 (JSON 502, or SSE error without `[DONE]`). Required/named calls cannot silently
 finish as normal text. XML examples remain text under auto/none. Argument bytes
 are preserved without heuristic unescaping; valid but semantically corrupted
-upstream strings cannot be reconstructed.
+upstream strings cannot be reconstructed. Tools declared `strict: true` are
+additionally checked against their JSON Schema (`type`, `required`, `enum`,
+`additionalProperties: false`, nesting, bounds); non-strict tools pass through.
+JSON and SSE share one completion validator; a stream without a terminal event
+is a `protocol_error` on both, and a newline-limit stop reports `length`.
+The user JWT is cached per credential and refreshed before its `exp` claim.
 
 ```sh
 bun run typecheck

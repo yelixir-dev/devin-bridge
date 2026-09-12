@@ -203,6 +203,16 @@ with its original `tool_calls`, then a `role: "tool"` message whose
 Send the updated history for the next completion. Every pending call needs one
 matching result; orphaned or missing results are rejected before inference.
 
+Tools declared with `strict: true` are held to their declared JSON Schema:
+arguments that violate `type`, `required`, `enum`, `const`, `properties`,
+`additionalProperties: false`, `items`, length/range bounds, or `anyOf`/`oneOf`/`allOf`
+fail with `invalid_tool_call` instead of being passed through. Unknown schema
+keywords are ignored rather than treated as violations. Non-strict tools keep
+OpenAI semantics and are forwarded unchanged. JSON and SSE share one completion
+validator, so a stream that ends without a terminal event is a `protocol_error`
+on both surfaces, and an upstream newline-limit stop is reported as
+`finish_reason: "length"`.
+
 | Environment variable | Required | Behavior |
 | --- | --- | --- |
 | `DEVIN_BRIDGE_API_KEY` | Yes | Local client key; at least 16 characters |
@@ -220,7 +230,7 @@ With that token and no URL override, the upstream base is
 
 1. Load the session token and discover the account's model catalog with `GetCliModelConfigs`.
 2. Validate the request and resolve SWE-2 effort to an exact, enabled, non-router model ID.
-3. Obtain a user JWT through `GetUserJwt`; no browser or CLI is started.
+3. Obtain a user JWT through `GetUserJwt`; no browser or CLI is started. The JWT is cached per credential and refreshed one minute before its `exp` claim (observed lifetime: 15 minutes), so concurrent requests share one auth call.
 4. Encode a `CASCADE` request with the pinned protobuf schema and call `GetChatMessage`.
 5. Decode text, tool-argument, and usage events, checking reported model identity.
 6. Return OpenAI-shaped JSON/SSE; propagate errors and cancel inference when the consumer closes.

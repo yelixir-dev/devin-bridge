@@ -198,6 +198,15 @@ XML 텍스트를 실행 가능한 호출로 승격하지 않으며, `auto`나 `n
 미처리 호출마다 연결된 결과 하나가 필요하며, 연결되지 않거나 누락된 결과는
 추론 전에 거부한다.
 
+`strict: true`로 선언한 도구는 선언한 JSON Schema를 기준으로 검사한다.
+`type`, `required`, `enum`, `const`, `properties`,
+`additionalProperties: false`, `items`, 길이·범위 제한, `anyOf`/`oneOf`/`allOf`를
+위반하는 인자는 그대로 전달하지 않고 `invalid_tool_call`로 실패 처리한다.
+알 수 없는 스키마 키워드는 위반으로 보지 않고 무시한다. strict가 아닌 도구는
+OpenAI 의미 그대로 인자를 변경 없이 전달한다. JSON과 SSE는 하나의 완료 검증기를
+공유하므로, 종료 이벤트 없이 끝난 스트림은 두 표면 모두 `protocol_error`가 되고
+업스트림의 줄 수 제한 종료는 `finish_reason: "length"`로 보고한다.
+
 | 환경변수 | 필수 여부 | 동작 |
 | --- | --- | --- |
 | `DEVIN_BRIDGE_API_KEY` | 필수 | 로컬 클라이언트 키. 16자 이상 |
@@ -215,7 +224,7 @@ XML 텍스트를 실행 가능한 호출로 승격하지 않으며, `auto`나 `n
 
 1. 세션 토큰을 읽고 `GetCliModelConfigs`로 계정의 모델 목록을 조회한다.
 2. 요청을 검증하고 SWE-2 추론 수준을 정확한 활성 모델 ID로 해석한다. 라우터 모델은 허용하지 않는다.
-3. `GetUserJwt`로 사용자 JWT를 얻는다. 브라우저나 CLI를 시작하지 않는다.
+3. `GetUserJwt`로 사용자 JWT를 얻는다. 브라우저나 CLI를 시작하지 않는다. JWT는 자격증명별로 캐시하고 `exp` 클레임 1분 전에 갱신하므로(관측된 수명 15분) 동시 요청이 인증 호출 하나를 공유한다.
 4. 고정된 protobuf 스키마로 `CASCADE` 요청을 인코딩해 `GetChatMessage`를 호출한다.
 5. 텍스트·도구 인자·사용량 이벤트를 해석하면서 보고된 모델 ID를 검사한다.
 6. OpenAI 형태의 JSON/SSE를 반환한다. 오류는 전달하고 클라이언트가 연결을 닫으면 추론을 취소한다.

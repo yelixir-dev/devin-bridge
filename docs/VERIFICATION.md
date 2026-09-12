@@ -177,6 +177,47 @@ increment fixes false-success handling for detectable contract violations; it
 does not fix arbitrary upstream generation errors. Deploying the commit to a
 remote service is a separate operator action, followed by another live test.
 
+## Completion pipeline consolidation
+
+A supplied third-party reference implementation was compared read-only against
+this bridge. Its protobuf schema differed from the vendored schema only by a
+trailing blank line and its string codec path was equivalent, so it offered no
+fix for the upstream escaping failures above. It did motivate three changes:
+
+- **JWT caching.** `GetUserJwt` was called once per completion. The user JWT is
+  now cached per credential and refreshed one minute before its `exp` claim,
+  with concurrent callers sharing one in-flight fetch and failures never cached.
+  A live check against the real auth endpoint made three concurrent and one
+  later request: one upstream call, one distinct token, 612 ms for the first
+  caller and 0 ms for the cached caller. The observed JWT lifetime is 900 seconds;
+  the fallback lifetime without a readable `exp` is five minutes.
+- **One completion validator.** JSON and SSE previously ran separate event loops
+  with different failure codes for a stream that ended without a terminal event
+  (`empty_response` versus `protocol_error`). Both now consume a shared
+  `CompletionState`; the boundary suite asserts identical failure behavior.
+- **Newline-limit truncation.** `StopReason.MAX_NEWLINES` previously surfaced as
+  `unsupported_stop_reason`; it is now reported as `finish_reason: "length"`.
+  A live probe requesting 260 numbered lines returned all 260 lines with a
+  normal stop under both the default `maxNewlines` of 200 and 4096, so the
+  configured limit was not enforced upstream in that sample; the mapping is a
+  correctness fix for the case where it is.
+
+Tools declared `strict: true` are now checked against their declared JSON
+Schema before a call is returned (52 validator tests cover the supported
+keywords; unknown keywords are ignored). Non-strict tools keep OpenAI
+pass-through semantics. Red tests captured 9 failures before the change
+(schema violations returned 200, JSON missing-terminal returned
+`empty_response`, `MAX_NEWLINES` errored); afterward all 189 tests passed with
+type checking, diagnostics and the build.
+
+Post-change live checks against the restarted local server and real upstream:
+a strict `add_numbers` call returned `{"a": 17, "b": 25}` with
+`finish_reason: "tool_calls"`; three sequential text completions returned
+`OK`; the three mixed-control-character HTTP cases repeated their earlier
+outcome (the repeated NUL/escape case remains an upstream fidelity failure);
+and the installed OmO ModelRuntime completed the two-turn native tool round
+trip with a fresh random receipt.
+
 ## Reproduce
 
 Follow the [README](../README.md) to start the service and make an authorized
