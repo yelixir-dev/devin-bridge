@@ -224,28 +224,37 @@ After the operator redeployed the remote gateway, the same 20-check live suite
 (38 real requests through the installed OmO runtime, block-array content,
 `max_tokens`, high reasoning, no fallback) was run again:
 
-| Measure | First run | Second run |
-| --- | --- | --- |
-| Checks passed | 18 of 20 | 18 of 20 |
-| HTTP 200 responses | 38 of 38 | 38 of 38 |
-| Total wall time for 38 turns | 502 s | 195 s |
-| Total reported tokens | 25,708 | 24,504 |
-| Turns with upstream prefix-cache reads | 15 | 15 |
+| Measure | First run | Second run | Third run |
+| --- | --- | --- | --- |
+| Checks passed | 18 of 20 | 18 of 20 | 19 of 20 |
+| HTTP 200 responses | 38 of 38 | 38 of 38 | 38 of 38 |
+| Total wall time for 38 turns | 502 s | 195 s | 287 s |
+| Total reported tokens | 25,708 | 24,504 | 25,754 |
+| Turns with upstream prefix-cache reads | 15 | 15 | 16 |
+
+The third run followed the deployment of the build-identity release: a request
+through the remote gateway returned `system_fingerprint: "devin-bridge-0.1.0"`
+before the suite started, which is the first deployment confirmed from outside
+the proxy. Its only failure was the 64-line NUL case (NUL characters dropped);
+the short and streamed NUL cases passed on that run.
 
 Every baseline workflow passed again: parallel calls with reverse-order results,
 five random dependent steps, error recovery, repeated round trips, enum and
 optional-field handling. The wall-time drop cannot be attributed to the bridge
 alone; upstream latency varied widely between runs.
 
-The two failures moved. The streamed six-copy case passed this time, while the
-short case and the 64-line case failed. Every failure observed so far, across
-both runs and the native diagnostics, involved a requested `\u0000` (NUL)
-character, and the failure shape changed each time: dropped NUL, `\null`
-in place of `\u0000null`, double-escaped quotes and backslashes, or an XML
-invocation returned as text. No case without NUL has failed, including the
-64-line Unicode payload. This is an observed correlation in a small sample, not
-a specification; the bridge forwards the bytes it receives and cannot detect or
-repair a syntactically valid string that differs from what was requested.
+The failures moved between runs: the streamed six-copy case failed only in the
+first run, the short case failed in the first two, and the 64-line case failed
+in the last two. Every failure observed so far, across three remote runs and
+the native diagnostics, involved a requested `\u0000` (NUL) character, and the
+failure shape changed each time: dropped NUL, `\null` in place of
+`\u0000null`, double-escaped quotes and backslashes, or an XML invocation
+returned as text. No case without NUL has failed in any run. This is an observed
+correlation in a small sample, not a specification; the bridge forwards the
+bytes it receives and cannot detect or repair a syntactically valid string that
+differs from what was requested. The live harness now reports these three NUL
+scenarios separately from unexpected failures so that a bridge regression is
+not masked by the known upstream class.
 
 Prefix-cache reads occurred with a fresh `cascadeId` on every request, so the
 reference implementation's per-conversation `cascadeId` reuse is not required
