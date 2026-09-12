@@ -218,6 +218,46 @@ outcome (the repeated NUL/escape case remains an upstream fidelity failure);
 and the installed OmO ModelRuntime completed the two-turn native tool round
 trip with a fresh random receipt.
 
+## Second remote run after redeployment
+
+After the operator redeployed the remote gateway, the same 20-check live suite
+(38 real requests through the installed OmO runtime, block-array content,
+`max_tokens`, high reasoning, no fallback) was run again:
+
+| Measure | First run | Second run |
+| --- | --- | --- |
+| Checks passed | 18 of 20 | 18 of 20 |
+| HTTP 200 responses | 38 of 38 | 38 of 38 |
+| Total wall time for 38 turns | 502 s | 195 s |
+| Total reported tokens | 25,708 | 24,504 |
+| Turns with upstream prefix-cache reads | 15 | 15 |
+
+Every baseline workflow passed again: parallel calls with reverse-order results,
+five random dependent steps, error recovery, repeated round trips, enum and
+optional-field handling. The wall-time drop cannot be attributed to the bridge
+alone; upstream latency varied widely between runs.
+
+The two failures moved. The streamed six-copy case passed this time, while the
+short case and the 64-line case failed. Every failure observed so far, across
+both runs and the native diagnostics, involved a requested `\u0000` (NUL)
+character, and the failure shape changed each time: dropped NUL, `\null`
+in place of `\u0000null`, double-escaped quotes and backslashes, or an XML
+invocation returned as text. No case without NUL has failed, including the
+64-line Unicode payload. This is an observed correlation in a small sample, not
+a specification; the bridge forwards the bytes it receives and cannot detect or
+repair a syntactically valid string that differs from what was requested.
+
+Prefix-cache reads occurred with a fresh `cascadeId` on every request, so the
+reference implementation's per-conversation `cascadeId` reuse is not required
+for upstream caching and was not adopted.
+
+The deployed build could not be identified from outside because the remote
+gateway sits behind a proxy and the bridge exposed no build identity. A baseline
+request through the remote gateway returned no `system_fingerprint`. Completions
+and SSE chunks now carry `system_fingerprint: "devin-bridge-<version>"` and
+`/health` reports `version`; a test keeps the runtime constant equal to
+`package.json`. The 191-test suite, type check, diagnostics and build passed.
+
 ## Reproduce
 
 Follow the [README](../README.md) to start the service and make an authorized
