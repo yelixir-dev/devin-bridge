@@ -1,4 +1,5 @@
 import { StopReason } from "../vendor/devin-proto.ts";
+import type { ChatToolCall } from "../vendor/devin-proto.ts";
 import type { ChatEvent, Usage } from "./devin-rpc.ts";
 import { UpstreamError } from "./connect.ts";
 
@@ -10,11 +11,12 @@ export function publicError(error: unknown): UpstreamError {
   return new UpstreamError("upstream_error");
 }
 
-export function finishReason(reason: number): "stop" | "length" | "content_filter" {
+export function finishReason(reason: number): "stop" | "length" | "content_filter" | "tool_calls" {
   switch (reason) {
     case StopReason.STOP_PATTERN: return "stop";
     case StopReason.MAX_TOKENS: return "length";
     case StopReason.CONTENT_FILTER: return "content_filter";
+    case StopReason.FUNCTION_CALL: return "tool_calls";
     default: throw new UpstreamError("unsupported_stop_reason");
   }
 }
@@ -30,6 +32,71 @@ export function openaiUsage(usage: Usage) {
 
 const sse = (value: unknown) => `data: ${JSON.stringify(value)}\n\n`;
 
+export interface OpenAIToolCall {
+  readonly id: string;
+  readonly type: "function";
+  readonly function: { readonly name: string; readonly arguments: string };
+}
+
+interface ToolDelta {
+  readonly index: number;
+  readonly id?: string;
+  readonly type?: "function";
+  readonly function: { readonly name?: string; readonly arguments?: string };
+}
+
+// Mutable per-completion state. Both JSON and SSE use the same byte-preserving accumulator.
+export class ToolCallAccumulator {
+  private readonly calls = new Map<string, { index: number; name: string; arguments: string }>();
+  private activeId: string | undefined;
+
+  update(incoming: readonly ChatToolCall[]): readonly ToolDelta[] {
+    const deltas: ToolDelta[] = [];
+    for (const call of incoming) {
+      const id = call.id || this.activeId;
+      if (!id || call.invalidJsonErr) throw new UpstreamError("invalid_tool_call");
+      const previous = this.calls.get(id);
+      const state = previous ?? { index: this.calls.size, name: "", arguments: "" };
+      if (state.name && call.name && state.name !== call.name) throw new UpstreamError("invalid_tool_call");
+      const name = state.name ? "" : call.name;
+      const nextArguments = call.argumentsJson.startsWith(state.arguments)
+        ? call.argumentsJson : state.arguments + call.argumentsJson;
+      const argumentDelta = nextArguments.slice(state.arguments.length);
+      state.name ||= call.name;
+      state.arguments = nextArguments;
+      this.calls.set(id, state);
+      this.activeId = id;
+      if (!previous || name || argumentDelta) deltas.push({
+        index: state.index,
+        ...(!previous ? { id, type: "function" as const } : {}),
+        function: {
+          ...(name ? { name } : {}),
+          ...(argumentDelta ? { arguments: argumentDelta } : {}),
+        },
+      });
+    }
+    return deltas;
+  }
+
+  get size(): number { return this.calls.size; }
+
+  snapshot(): readonly OpenAIToolCall[] {
+    return [...this.calls].map(([id, state]) => {
+      if (!state.name) throw new UpstreamError("invalid_tool_call");
+      let argumentsValue: unknown;
+      try { argumentsValue = JSON.parse(state.arguments); }
+      catch (error) {
+        if (error instanceof SyntaxError) throw new UpstreamError("invalid_tool_call");
+        throw error;
+      }
+      if (argumentsValue === null || typeof argumentsValue !== "object" || Array.isArray(argumentsValue)) {
+        throw new UpstreamError("invalid_tool_call");
+      }
+      return { id, type: "function", function: { name: state.name, arguments: state.arguments } };
+    });
+  }
+}
+
 export async function* openaiStream(
   events: AsyncIterable<ChatEvent>,
   identity: { readonly id: string; readonly model: string; readonly created: number },
@@ -39,6 +106,7 @@ export async function* openaiStream(
   yield sse({ ...chunk, choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] });
   let usage: Usage | null = null;
   let visible = false;
+  const tools = new ToolCallAccumulator();
   try {
     for await (const event of events) {
       switch (event.type) {
@@ -47,10 +115,19 @@ export async function* openaiStream(
           yield sse({ ...chunk, choices: [{ index: 0, delta: { content: event.text }, finish_reason: null }] });
           break;
         case "thinking": break; // This text-only surface does not expose internal reasoning.
-        case "toolcall": throw new UpstreamError("unsupported_tool_call");
+        case "toolcall": {
+          const deltas = tools.update(event.toolCalls);
+          if (deltas.length) yield sse({
+            ...chunk, choices: [{ index: 0, delta: { tool_calls: deltas }, finish_reason: null }],
+          });
+          break;
+        }
         case "usage": usage = event.usage; break; // Snapshot, not an additive charge.
         case "done": {
           const reason = finishReason(event.stopReason);
+          if (reason === "tool_calls") {
+            if (!tools.snapshot().length) throw new UpstreamError("invalid_tool_call");
+          }
           if (!visible && reason === "stop") throw new UpstreamError("empty_response");
           yield sse({ ...chunk, choices: [{ index: 0, delta: {}, finish_reason: reason }] });
           usage = event.usage ?? usage;

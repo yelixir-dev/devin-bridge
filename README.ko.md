@@ -2,7 +2,7 @@
   <img src="docs/assets/banner.svg" alt="devin-bridge — 모델 직접 호출, 조용한 모델 대체 없음" width="880">
 </p>
 
-<p align="center"><strong>Devin 모델을 로컬 OpenAI 호환 텍스트 API로 사용한다.</strong></p>
+<p align="center"><strong>Devin 모델을 로컬 OpenAI 호환 채팅·함수 도구 API로 사용한다.</strong></p>
 
 <p align="center">
   <a href="prototype/package.json"><img src="https://img.shields.io/badge/runtime-Bun%201.4.1-b57920?style=flat-square" alt="Bun 1.4.1에서 검증"></a>
@@ -17,9 +17,9 @@
 <!-- README-I18N:END -->
 
 **devin-bridge**는 Devin 내부 Connect/protobuf 추론 인터페이스를 연결하는
-로컬 텍스트 프록시다. Devin CLI나 ACP 에이전트를 실행하지 않고 Chat Completions를
+로컬 채팅·함수 도구 프록시다. Devin CLI나 ACP 에이전트를 실행하지 않고 Chat Completions를
 제공한다. 실제 `swe-2-medium` 요청을 HTTP 프록시로 보내 **6.52초** 만에 `OK`를
-받았으며, 현재 재현 가능한 테스트는 **20개**다.
+받았다. 정확한 모델 선택, 툴콜, 스트리밍, 오류 처리를 회귀 테스트로 검증한다.
 검증된 프로토타입이며 OpenAI API 전체를 대체하는 제품은 아니다.
 측정 내용과 한계는 [검증 기록](docs/VERIFICATION.md)에 정리했다.
 
@@ -28,8 +28,8 @@
 ## 기능
 
 - **추론 직접 호출.** 고정 버전의 [oh-my-pi 와이어 선언](prototype/vendor/SOURCE.md)으로 Devin의 Connect/protobuf 인터페이스를 호출한다. CLI 자식 프로세스나 에이전트 루프가 없다.
-- **JSON과 SSE 응답.** 텍스트 전용 `POST /v1/chat/completions`를 제공하며 업스트림이 보고한 토큰 사용량을 전달한다.
-- **정확한 모델 선택.** 계정에서 조회한 모델 ID만 허용하고 라우터 모델은 제외하며, 알 수 없는 ID는 추론 전에 거부한다.
+- **JSON·SSE·네이티브 함수 도구.** `POST /v1/chat/completions`에서 도구 인자 스트리밍, 호출 ID에 연결된 도구 결과, 업스트림 토큰 사용량을 제공한다.
+- **SWE-2 추론 수준.** `swe-2` 하나로 표시하고 `reasoning_effort`에 따라 사용 가능한 medium/high/max 변형을 정확히 선택한다.
 - **모델 폴백 없음.** 모델·전송 계층의 자동 재시도를 하지 않는다. 업스트림 거부를 다른 모델 호출로 숨기지 않고 그대로 알린다.
 - **로컬 접근 통제.** `127.0.0.1`에 바인딩하고 별도의 클라이언트 API 키를 검사하며 브라우저 Origin이 있는 요청을 거부한다.
 - **잘못된 스트림은 실패 처리.** 손상되거나 잘린 Connect 응답과 보고된 모델 불일치를 성공으로 처리하지 않는다.
@@ -91,11 +91,11 @@ curl -sS http://127.0.0.1:8787/v1/models \
 curl -N http://127.0.0.1:8787/v1/chat/completions \
   -H "Authorization: Bearer $DEVIN_BRIDGE_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"model":"swe-2-medium","messages":[{"role":"user","content":"Reply with exactly: OK"}],"max_tokens":128,"stream":true,"stream_options":{"include_usage":true}}'
+  -d '{"model":"swe-2","reasoning_effort":"high","messages":[{"role":"user","content":"Reply with exactly: OK"}],"max_tokens":128,"stream":true,"stream_options":{"include_usage":true}}'
 ```
 
-`GET /v1/models`가 반환한 ID를 정확히 사용한다. 사용 가능한 모델은 계정에 따라 다르다.
-실제 검증에서 받은 응답 텍스트는 다음과 같다.
+`GET /v1/models`가 반환한 ID를 사용한다. 사용 가능한 모델은 계정에 따라 다르다.
+기존 `swe-2-medium` 기준 호출에서 받은 응답 텍스트는 다음과 같다.
 
 ```text
 OK
@@ -108,13 +108,72 @@ OK
 | 엔드포인트 | 인증 | 결과 |
 | --- | --- | --- |
 | `GET /health` | 없음 | 로컬 서비스 상태와 전송 방식 |
-| `GET /v1/models` | 클라이언트 Bearer 키 | 조회된 활성 모델 ID 목록. 라우터 모델은 제외 |
-| `POST /v1/chat/completions` | 클라이언트 Bearer 키 | JSON 또는 SSE 텍스트 응답 |
+| `GET /v1/models` | 클라이언트 Bearer 키 | 활성 모델 목록. SWE-2 변형은 하나로 통합 |
+| `POST /v1/chat/completions` | 클라이언트 Bearer 키 | JSON 또는 SSE 텍스트·함수 도구 응답 |
 
-허용하는 요청 필드는 `model`, `messages`, `stream`, `max_tokens`,
-`temperature`, `stop`, `n:1`, `stream_options.include_usage`다.
-메시지 역할은 `system`, `user`, `assistant`이며 내용은 문자열만 지원한다.
+허용하는 요청 필드는 `model`, `reasoning_effort`, `messages`, `stream`,
+`max_tokens`, `temperature`, `stop`, `n:1`, `stream_options.include_usage`,
+`tools`, `tool_choice`, `parallel_tool_calls`다. 텍스트 내용은 문자열만 지원하며,
+도구를 호출하는 assistant 메시지는 content가 null이거나 생략될 수 있다.
 다른 필드는 조용히 무시하지 않고 400으로 거부한다.
+
+### SWE-2 추론 수준
+
+| 요청 | 실제 업스트림 모델 |
+| --- | --- |
+| `model: "swe-2"`, `reasoning_effort: "medium"` | `swe-2-medium` |
+| `model: "swe-2"`, `reasoning_effort: "high"` | `swe-2-high` |
+| `model: "swe-2"`, `reasoning_effort: "max"` | `swe-2-max` |
+| 추론 수준 없는 `model: "swe-2"` | `swe-2-high` |
+
+기본값은 **high**로 고정하며, 가용성에 따라 다른 레벨로 폴백하지 않는다.
+선택한 변형이 없으면 404, 잘못되거나 충돌하는 추론 수준은 400을 반환한다.
+모델 목록에서는 하나로 묶지만 기존 변형 ID 직접 호출도 유지한다.
+다른 모델에 자동 추론 수준 라우팅을 적용하지 않는다.
+
+통합된 모델 항목에는 확장 필드 `reasoning_efforts`와, high가 사용 가능할 때
+`default_reasoning_effort`가 포함된다. 클라이언트는 여전히 `reasoning_effort`를
+보내야 하며 이 메타데이터만으로 선택 UI가 자동 생성되지는 않는다.
+JSON·SSE 응답의 `model` 값은 **실제로 선택한 변형**을 표시한다.
+
+### 함수 도구
+
+OpenAI 함수 정의를 보내고 `tool_choice`로 `auto`, `none`, `required` 또는
+특정 함수를 선택한다. 병렬 호출은 `parallel_tool_calls: true`로 켜며 기본값은 false다.
+
+```json
+{
+  "model": "swe-2",
+  "reasoning_effort": "high",
+  "messages": [{"role": "user", "content": "Use add_numbers to add 17 and 25."}],
+  "tools": [{
+    "type": "function",
+    "function": {
+      "name": "add_numbers",
+      "description": "Add two integers",
+      "parameters": {
+        "type": "object",
+        "properties": {"a": {"type": "integer"}, "b": {"type": "integer"}},
+        "required": ["a", "b"],
+        "additionalProperties": false
+      },
+      "strict": true
+    }
+  }],
+  "tool_choice": "required",
+  "stream": true
+}
+```
+
+SSE에서는 `delta.tool_calls`, JSON에서는 `message.tool_calls`를 읽는다.
+완료 시 `finish_reason: "tool_calls"`를 반환한다. 인자 조각은 일정한 `index`를
+기준으로 합치며, 새 호출에는 `id`와 함수 이름이 포함된다.
+
+**함수 실행은 클라이언트가 담당한다.** 응답의 `tool_calls`를 보존한 assistant
+메시지를 대화 기록에 넣고, 같은 호출 ID의 `tool_call_id`와 결과 `content`를 담은
+`role: "tool"` 메시지를 추가한다. 이 기록으로 다음 응답을 요청한다.
+미처리 호출마다 연결된 결과 하나가 필요하며, 연결되지 않거나 누락된 결과는
+추론 전에 거부한다.
 
 | 환경변수 | 필수 여부 | 동작 |
 | --- | --- | --- |
@@ -132,10 +191,10 @@ OK
 ## 동작 원리
 
 1. 세션 토큰을 읽고 `GetCliModelConfigs`로 계정의 모델 목록을 조회한다.
-2. HTTP 요청을 검증하고 정확히 일치하는 활성 모델 ID를 요구한다. 라우터 모델은 허용하지 않는다.
+2. 요청을 검증하고 SWE-2 추론 수준을 정확한 활성 모델 ID로 해석한다. 라우터 모델은 허용하지 않는다.
 3. `GetUserJwt`로 사용자 JWT를 얻는다. 브라우저나 CLI를 시작하지 않는다.
 4. 고정된 protobuf 스키마로 `CASCADE` 요청을 인코딩해 `GetChatMessage`를 호출한다.
-5. Connect 프레임을 텍스트·사용량 이벤트로 해석하면서 보고된 모델 ID를 검사한다.
+5. 텍스트·도구 인자·사용량 이벤트를 해석하면서 보고된 모델 ID를 검사한다.
 6. OpenAI 형태의 JSON/SSE를 반환한다. 오류는 전달하고 클라이언트가 연결을 닫으면 추론을 취소한다.
 
 호출자가 요청마다 대화 기록을 전달한다. 브리지가 도구를 실행하거나 로컬 에이전트
@@ -157,6 +216,8 @@ bun run build
 | 오류 전달 | [RPC 테스트](prototype/tests/rpc.test.ts) | 잘린 프레임, 잘못된 트레일러, 업스트림 거부, 보고된 모델 대체 |
 | HTTP 계약 | [HTTP 테스트](prototype/tests/http.test.ts) | 잘못된 JSON/SSE 응답, 인증 누락, 미지원 입력, 거부 후 재시도 |
 | 자격증명 파싱 | [TOML 테스트](prototype/tests/creds.test.ts) | 따옴표가 토큰 값의 일부로 들어가는 오류 |
+| SWE-2 추론 수준 | [그룹 테스트](prototype/tests/swe2-effort.test.ts) | 잘못된 변형, 부정확한 목록, 추론 수준 폴백 |
+| 함수 도구 | [와이어](prototype/tests/tool-wire.test.ts), [스트림](prototype/tests/tool-output.test.ts), [HTTP](prototype/tests/tool-http.test.ts) | 선언·인자 손실, 불안정한 ID, 끊긴 결과 연결, 도구 전용 응답을 빈 응답으로 거부하는 오류 |
 
 자동 테스트는 로컬 픽스처를 사용하므로 계정 크레딧을 소모하지 않는다.
 별도의 [실제 호출 검증 기록](docs/VERIFICATION.md)은 인증된 SWE-2 호출을 다룬다.
@@ -192,7 +253,7 @@ Cognition/Devin 및 출처에 기재된 원저작자는 이 프로젝트를 보�
 
 ## 현재 제약
 
-- **텍스트 전용 프로토타입:** 도구, 이미지, Anthropic Messages 엔드포인트, 대시보드, 대화형 OAuth는 없다. 미지원 필드는 명시적으로 거부하며 유효한 세션 토큰을 사용해야 한다.
+- **아직 프로토타입:** 이미지, Anthropic Messages 엔드포인트, 대시보드, 대화형 OAuth는 없다. 클라이언트가 함수 도구를 실행하며 유효한 세션 토큰과 연결된 도구 결과를 보내야 한다.
 - **비공개 업스트림 인터페이스:** 와이어 동작과 계정별 가용성이 바뀔 수 있다. 업데이트 후 픽스처 테스트와 승인된 소규모 실제 호출로 확인한다.
 - **로컬 서비스 전용:** 원격 배포 자동화나 공개 리스너가 없다. 접근을 비공개로 유지하고 클라이언트 키와 업스트림 토큰을 모두 보호한다.
 - **계정에 따른 사용량:** 구독 한도와 서비스 약관은 그대로 적용된다. 거부를 우회하려고 다른 모델을 호출하지 않으므로 반환된 오류와 계정 사용량을 확인한다.

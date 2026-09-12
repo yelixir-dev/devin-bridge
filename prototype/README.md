@@ -25,17 +25,27 @@ upstream URL. No credentials are logged or written by this prototype.
 curl -N http://127.0.0.1:8787/v1/chat/completions \
   -H 'Authorization: Bearer replace-with-a-local-client-key' \
   -H 'Content-Type: application/json' \
-  -d '{"model":"swe-2-medium","messages":[{"role":"user","content":"Reply with exactly: OK"}],"max_tokens":128,"stream":true,"stream_options":{"include_usage":true}}'
+  -d '{"model":"swe-2","reasoning_effort":"high","messages":[{"role":"user","content":"Reply with exactly: OK"}],"max_tokens":128,"stream":true,"stream_options":{"include_usage":true}}'
 ```
 
-Supported: `GET /health`, authenticated `GET /v1/models`, and text-only
+Supported: `GET /health`, authenticated `GET /v1/models`, and text/function-tool
 `POST /v1/chat/completions` (JSON or SSE). Supported parameters are `model`,
-`messages` (`system`, `user`, `assistant` with string content), `stream`,
-`max_tokens`, `temperature`, `stop`, `n:1`, and `stream_options.include_usage`.
-Unsupported fields, tools, and images return 400 before inference.
-Model IDs must match the discovered catalog exactly; unknown IDs return 404.
+`reasoning_effort`, `messages` (`system`, `user`, `assistant`, `tool`), `stream`,
+`max_tokens`, `temperature`, `stop`, `n:1`, `stream_options.include_usage`,
+`tools`, `tool_choice`, and `parallel_tool_calls`.
+Unsupported fields and images return 400 before inference.
+`swe-2` groups medium/high/max variants. `reasoning_effort` selects the exact
+variant; omission means high. Missing variants return 404, never another level.
+Raw variant IDs remain accepted; conflicting effort returns 400.
+Other model IDs must match the discovered catalog exactly; unknown IDs return 404.
 Router models are excluded. Responses reporting a different model are rejected.
 No automatic transport or model retries are performed.
+
+Function tools emit `tool_calls` in JSON or indexed `delta.tool_calls` in SSE,
+ending with `finish_reason: "tool_calls"`. The caller executes the function and
+sends the assistant call plus a correlated `role: "tool"` result on the next
+request. The bridge does not execute tools. See the [root README](../README.md)
+for the complete request/response contract.
 
 ```sh
 bun run typecheck

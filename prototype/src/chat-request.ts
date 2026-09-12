@@ -1,6 +1,7 @@
 import {
   CacheControlType, ChatMessagePromptSchema, ChatMessageRequestType, ChatMessageSource,
-  ChatToolChoiceSchema, CompletionConfigurationSchema, ConversationalPlannerMode,
+  ChatToolCallSchema, ChatToolChoiceSchema, ChatToolDefinitionSchema,
+  CompletionConfigurationSchema, ConversationalPlannerMode,
   GetChatMessageRequestSchema, MetadataSchema, PromptCacheOptionsSchema,
 } from "../vendor/devin-proto.ts";
 
@@ -33,7 +34,26 @@ export interface ChatParams {
   readonly baseUrl: string;
   readonly modelUid: string;
   readonly systemPrompt?: string;
-  readonly messages: readonly { readonly source: ChatMessageSource; readonly text: string }[];
+  readonly messages: readonly {
+    readonly source: ChatMessageSource;
+    readonly text: string;
+    readonly messageId?: string;
+    readonly toolCalls?: readonly {
+      readonly id: string;
+      readonly name: string;
+      readonly argumentsJson: string;
+    }[];
+    readonly toolCallId?: string;
+    readonly toolResultIsError?: boolean;
+  }[];
+  readonly tools?: readonly {
+    readonly name: string;
+    readonly description: string;
+    readonly jsonSchemaString: string;
+    readonly strict: boolean;
+  }[];
+  readonly toolChoice?: { readonly optionName: string } | { readonly toolName: string };
+  readonly parallelToolCalls?: boolean;
   readonly maxTokens?: number;
   readonly temperature?: number;
   readonly stop?: readonly string[];
@@ -43,17 +63,24 @@ export interface ChatParams {
 
 export function encodeChatRequest(p: ChatParams): Uint8Array {
   const temperature = p.temperature ?? 0.4;
+  const toolChoice = p.toolChoice ?? { optionName: "auto" };
   return GetChatMessageRequestSchema.encode(GetChatMessageRequestSchema.create({
     metadata: metadata(p.apiKey, p.identity ?? CLI_IDENTITY, p.userJwt),
     prompt: p.systemPrompt ?? "",
     chatMessagePrompts: p.messages.map(m => ChatMessagePromptSchema.create({
-      messageId: crypto.randomUUID(), source: m.source, prompt: m.text,
+      messageId: m.messageId ?? crypto.randomUUID(), source: m.source, prompt: m.text,
+      toolCalls: (m.toolCalls ?? []).map(call => ChatToolCallSchema.create(call)),
+      toolCallId: m.toolCallId ?? "",
+      toolResultIsError: m.toolResultIsError ?? false,
     })),
     chatModelUid: p.modelUid,
     requestType: ChatMessageRequestType.CASCADE,
     plannerMode: ConversationalPlannerMode.DEFAULT,
-    disableParallelToolCalls: true,
-    toolChoice: ChatToolChoiceSchema.create({ choice: { case: "optionName", value: "auto" } }),
+    tools: (p.tools ?? []).map(tool => ChatToolDefinitionSchema.create(tool)),
+    disableParallelToolCalls: !(p.parallelToolCalls ?? false),
+    toolChoice: ChatToolChoiceSchema.create({ choice: "toolName" in toolChoice
+      ? { case: "toolName", value: toolChoice.toolName }
+      : { case: "optionName", value: toolChoice.optionName } }),
     systemPromptCacheOptions: PromptCacheOptionsSchema.create({ type: CacheControlType.EPHEMERAL }),
     cascadeId: crypto.randomUUID(),
     executionId: crypto.randomUUID(),

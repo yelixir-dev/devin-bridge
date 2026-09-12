@@ -2,6 +2,7 @@ import { z } from "zod";
 import { createHandler } from "./http.ts";
 import { loadApiKey, loadApiServerUrl } from "./creds.ts";
 import { discoverModels, getUserJwt, SOURCE, streamChat, DEVIN_DEFAULT_BASE_URL } from "./devin-rpc.ts";
+import type { ChatParams } from "./devin-rpc.ts";
 
 const apiKey = z.string().min(16).parse(process.env["DEVIN_BRIDGE_API_KEY"]);
 const port = z.coerce.number().int().min(1).max(65535).default(8787).parse(process.env["PORT"]);
@@ -15,14 +16,33 @@ const server = Bun.serve({
     async *complete(input, signal) {
       const auth = await getUserJwt(token, baseUrl);
       const system = input.messages.filter(m => m.role === "system").map(m => m.content).join("\n\n");
-      const messages = input.messages.filter(m => m.role !== "system").map(m => ({
-        source: m.role === "assistant" ? SOURCE.SYSTEM : SOURCE.USER,
-        text: m.content,
-      }));
+      const messages = input.messages.filter(m => m.role !== "system").map((m): ChatParams["messages"][number] => {
+        switch (m.role) {
+          case "user": return { source: SOURCE.USER, text: m.content };
+          case "assistant": return {
+            source: SOURCE.SYSTEM, text: m.content ?? "",
+            toolCalls: (m.tool_calls ?? []).map(call => ({
+              id: call.id, name: call.function.name, argumentsJson: call.function.arguments,
+            })),
+          };
+          case "tool": return { source: SOURCE.TOOL, text: m.content, toolCallId: m.tool_call_id };
+          default: { const unhandled: never = m; throw unhandled; }
+        }
+      });
+      const toolChoice = typeof input.tool_choice === "object"
+        ? { toolName: input.tool_choice.function.name }
+        : { optionName: input.tool_choice ?? "auto" };
       yield* streamChat({
         apiKey: token, userJwt: auth.userJwt, baseUrl: auth.baseUrl,
         modelUid: input.model, systemPrompt: system, messages,
         maxTokens: input.max_tokens, signal,
+        tools: (input.tools ?? []).map(tool => ({
+          name: tool.function.name, description: tool.function.description ?? "",
+          jsonSchemaString: JSON.stringify(tool.function.parameters ?? { type: "object", properties: {} }),
+          strict: tool.function.strict ?? false,
+        })),
+        toolChoice,
+        ...(input.parallel_tool_calls !== undefined ? { parallelToolCalls: input.parallel_tool_calls } : {}),
         ...(input.temperature !== undefined ? { temperature: input.temperature } : {}),
         ...(input.stop !== undefined ? { stop: typeof input.stop === "string" ? [input.stop] : input.stop } : {}),
       });

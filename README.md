@@ -2,7 +2,7 @@
   <img src="docs/assets/banner.svg" alt="devin-bridge — direct model calls, no silent substitution" width="880">
 </p>
 
-<p align="center"><strong>Use Devin models through a local OpenAI-compatible text API.</strong></p>
+<p align="center"><strong>Use Devin models through a local OpenAI-compatible chat and function-tool API.</strong></p>
 
 <p align="center">
   <a href="prototype/package.json"><img src="https://img.shields.io/badge/runtime-Bun%201.4.1-b57920?style=flat-square" alt="Tested with Bun 1.4.1"></a>
@@ -16,10 +16,11 @@
 
 <!-- README-I18N:END -->
 
-**devin-bridge** is a local, text-only proxy for Devin's internal Connect/protobuf
+**devin-bridge** is a local chat and function-tool proxy for Devin's internal Connect/protobuf
 inference interface. It exposes Chat Completions without launching the Devin CLI
 or an ACP agent. A real `swe-2-medium` request returned `OK` through the HTTP proxy
-in **6.52 seconds**; the reproducible test suite currently contains **20 tests**.
+in **6.52 seconds**. Regression tests cover exact model selection, tool calls,
+streaming, and failure behavior.
 This is a verified prototype, not a full OpenAI API replacement.
 See the [verification record](docs/VERIFICATION.md) for the measurement and its limits.
 
@@ -28,8 +29,8 @@ See the [verification record](docs/VERIFICATION.md) for the measurement and its 
 ## What it does
 
 - **Direct inference.** Calls Devin's Connect/protobuf interface using pinned [oh-my-pi wire declarations](prototype/vendor/SOURCE.md); no CLI subprocess or agent loop.
-- **JSON and SSE responses.** Serves text-only `POST /v1/chat/completions`, including upstream-reported token usage.
-- **Exact model selection.** Accepts model IDs from the account's discovered catalog, excludes router models, and rejects unknown IDs before inference.
+- **JSON, SSE, and native function tools.** Serves `POST /v1/chat/completions` with streamed tool arguments, correlated tool results, and upstream-reported token usage.
+- **SWE-2 reasoning levels.** Exposes `swe-2` once and maps `reasoning_effort` to the exact available medium/high/max variant.
 - **No model fallback.** No automatic model or transport retries; upstream rejections are surfaced instead of substituting another model.
 - **Local access control.** Binds to `127.0.0.1`, checks a separate client API key, and rejects browser-origin requests.
 - **Fail-closed streams.** Rejects malformed/truncated Connect responses and reported model mismatches rather than marking them successful.
@@ -92,11 +93,11 @@ curl -sS http://127.0.0.1:8787/v1/models \
 curl -N http://127.0.0.1:8787/v1/chat/completions \
   -H "Authorization: Bearer $DEVIN_BRIDGE_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"model":"swe-2-medium","messages":[{"role":"user","content":"Reply with exactly: OK"}],"max_tokens":128,"stream":true,"stream_options":{"include_usage":true}}'
+  -d '{"model":"swe-2","reasoning_effort":"high","messages":[{"role":"user","content":"Reply with exactly: OK"}],"max_tokens":128,"stream":true,"stream_options":{"include_usage":true}}'
 ```
 
-Use an exact ID returned by `GET /v1/models`; availability depends on your account.
-The recorded response text was:
+Use a model ID returned by `GET /v1/models`; availability depends on your account.
+The recorded baseline request using `swe-2-medium` returned:
 
 ```text
 OK
@@ -109,13 +110,73 @@ benchmark. Set `stream` to `false` to receive one JSON completion instead.
 | Endpoint | Authentication | Result |
 | --- | --- | --- |
 | `GET /health` | None | Local service status and transport |
-| `GET /v1/models` | Client Bearer key | Discovered, enabled, non-router model IDs |
-| `POST /v1/chat/completions` | Client Bearer key | Text completion as JSON or SSE |
+| `GET /v1/models` | Client Bearer key | Enabled models, with SWE-2 variants grouped |
+| `POST /v1/chat/completions` | Client Bearer key | Text and function-tool completion as JSON or SSE |
 
-Accepted request fields: `model`, `messages`, `stream`, `max_tokens`,
-`temperature`, `stop`, `n:1`, and `stream_options.include_usage`.
-Message roles are `system`, `user`, and `assistant`, with string content only.
+Accepted request fields: `model`, `reasoning_effort`, `messages`, `stream`,
+`max_tokens`, `temperature`, `stop`, `n:1`, `stream_options.include_usage`,
+`tools`, `tool_choice`, and `parallel_tool_calls`. Text content remains string-only;
+assistant tool-call messages may have null/omitted content.
 Other fields are rejected with 400 rather than silently ignored.
+
+### SWE-2 reasoning
+
+| Request | Resolved upstream model |
+| --- | --- |
+| `model: "swe-2"`, `reasoning_effort: "medium"` | `swe-2-medium` |
+| `model: "swe-2"`, `reasoning_effort: "high"` | `swe-2-high` |
+| `model: "swe-2"`, `reasoning_effort: "max"` | `swe-2-max` |
+| `model: "swe-2"` without an effort | `swe-2-high` |
+
+The default is explicitly **high**, not an availability-based fallback. An
+unavailable selected variant returns 404; an invalid or conflicting effort
+returns 400. Existing raw variant IDs remain accepted even though discovery
+groups them. Other models do not gain automatic effort routing.
+
+The grouped catalog entry includes the extension fields `reasoning_efforts`
+and, when high is available, `default_reasoning_effort`. Clients must still send
+`reasoning_effort`; these metadata fields do not guarantee an automatic UI
+selector. JSON and SSE response `model` values report the **concrete variant**.
+
+### Function tools
+
+Send OpenAI function definitions and select `auto`, `none`, `required`, or a named
+function through `tool_choice`. Parallel calls are opt-in with
+`parallel_tool_calls: true` (default false).
+
+```json
+{
+  "model": "swe-2",
+  "reasoning_effort": "high",
+  "messages": [{"role": "user", "content": "Use add_numbers to add 17 and 25."}],
+  "tools": [{
+    "type": "function",
+    "function": {
+      "name": "add_numbers",
+      "description": "Add two integers",
+      "parameters": {
+        "type": "object",
+        "properties": {"a": {"type": "integer"}, "b": {"type": "integer"}},
+        "required": ["a", "b"],
+        "additionalProperties": false
+      },
+      "strict": true
+    }
+  }],
+  "tool_choice": "required",
+  "stream": true
+}
+```
+
+Read `delta.tool_calls` in SSE or `message.tool_calls` in JSON. The completion
+finishes with `finish_reason: "tool_calls"`. Reassemble argument fragments by
+their stable `index`; each new call provides its `id` and function name.
+
+**Your client executes the function.** Append the returned assistant message
+with its original `tool_calls`, then a `role: "tool"` message whose
+`tool_call_id` matches the call ID and whose `content` contains the result.
+Send the updated history for the next completion. Every pending call needs one
+matching result; orphaned or missing results are rejected before inference.
 
 | Environment variable | Required | Behavior |
 | --- | --- | --- |
@@ -133,10 +194,10 @@ With that token and no URL override, the upstream base is
 ## How it works
 
 1. Load the session token and discover the account's model catalog with `GetCliModelConfigs`.
-2. Validate the HTTP request and require an exact, enabled, non-router model ID.
+2. Validate the request and resolve SWE-2 effort to an exact, enabled, non-router model ID.
 3. Obtain a user JWT through `GetUserJwt`; no browser or CLI is started.
 4. Encode a `CASCADE` request with the pinned protobuf schema and call `GetChatMessage`.
-5. Decode Connect frames into text and usage events, checking reported model identity.
+5. Decode text, tool-argument, and usage events, checking reported model identity.
 6. Return OpenAI-shaped JSON/SSE; propagate errors and cancel inference when the consumer closes.
 
 The caller supplies conversation history on each request. The bridge does not
@@ -158,6 +219,8 @@ bun run build
 | Error propagation | [RPC tests](prototype/tests/rpc.test.ts) | Truncated frames, invalid trailers, upstream rejection, or reported model substitution |
 | HTTP contract | [HTTP tests](prototype/tests/http.test.ts) | Broken JSON/SSE responses, missing auth, unsupported inputs, or retries after rejection |
 | Credential parsing | [TOML test](prototype/tests/creds.test.ts) | Quote delimiters accidentally becoming part of a token |
+| SWE-2 effort | [Family tests](prototype/tests/swe2-effort.test.ts) | Wrong variant, misleading catalog, or effort fallback |
+| Function tools | [Wire](prototype/tests/tool-wire.test.ts), [stream](prototype/tests/tool-output.test.ts), [HTTP](prototype/tests/tool-http.test.ts) | Lost declarations/arguments, unstable IDs, broken result correlation, or tool-only replies rejected as empty |
 
 The automated tests use local fixtures and do not spend account credits.
 The separate [live verification record](docs/VERIFICATION.md) covers the
@@ -193,7 +256,7 @@ Neither Cognition/Devin nor the listed upstream authors endorse this project.
 
 ## Current limitations
 
-- **Text-only prototype:** no tools, images, Anthropic Messages endpoint, dashboard, or interactive OAuth. Unsupported fields return explicit errors; use a valid session token.
+- **Still a prototype:** no images, Anthropic Messages endpoint, dashboard, or interactive OAuth. Clients execute function tools; use a valid session token and send correlated results.
 - **Private upstream interface:** wire behavior and account availability can change. Run the fixture tests and a small authorized smoke test after an update.
 - **Local service only:** no remote-deployment automation or public listener. Keep access private and protect both the client key and upstream token.
 - **Account-dependent usage:** subscription limits and service terms still apply. Model fallback is never used to bypass a rejection; inspect returned errors and account usage.
