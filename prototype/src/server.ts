@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { createHandler } from "./http.ts";
+import { createUserJwtCache } from "./auth.ts";
 import { loadApiKey, loadApiServerUrl } from "./creds.ts";
 import { discoverModels, getUserJwt, SOURCE, streamChat, DEVIN_DEFAULT_BASE_URL } from "./devin-rpc.ts";
 import type { ChatParams } from "./devin-rpc.ts";
@@ -9,12 +10,13 @@ const port = z.coerce.number().int().min(1).max(65535).default(8787).parse(proce
 const token = loadApiKey();
 const baseUrl = loadApiServerUrl() ?? DEVIN_DEFAULT_BASE_URL;
 const models = await discoverModels(token, baseUrl);
+const userJwt = createUserJwtCache({ fetchJwt: () => getUserJwt(token, baseUrl) });
 const server = Bun.serve({
   hostname: "127.0.0.1", port, idleTimeout: 120, maxRequestBodySize: 512 * 1024,
   fetch: createHandler({
     models,
     async *complete(input, signal) {
-      const auth = await getUserJwt(token, baseUrl);
+      const auth = await userJwt.get();
       const system = input.messages.filter(m => m.role === "system" || m.role === "developer").map(m => m.content).join("\n\n");
       const messages = input.messages.filter(m => m.role !== "system" && m.role !== "developer").map((m): ChatParams["messages"][number] => {
         switch (m.role) {
