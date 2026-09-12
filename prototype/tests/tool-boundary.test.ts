@@ -91,6 +91,60 @@ for (const stream of [false, true]) {
     } else expect(JSON.parse(response.body).choices[0].finish_reason).toBe(reason);
   });
 
+  test(`fails a stream that ends without a terminal event as a protocol error (stream=${stream})`, async () => {
+    // Given upstream events that stop after text without any done marker.
+    const response = await request(stream, [{ type: "text", text: "partial" }]);
+    // When the completion is rendered, then JSON and SSE report the same protocol failure without success markers.
+    if (stream) {
+      expect(response.body).not.toContain("data: [DONE]");
+      const frames = response.body.split("\n\n").filter(Boolean).map(frame => JSON.parse(frame.slice(6)));
+      expect(frames.at(-1)).toMatchObject({ error: { code: "protocol_error" } });
+    } else {
+      expect(response.status).toBe(502);
+      expect(JSON.parse(response.body)).toMatchObject({ error: { code: "protocol_error" } });
+    }
+  });
+
+  const typed = (strict: boolean) => ({
+    type: "function",
+    function: {
+      name: "store", strict,
+      parameters: {
+        type: "object", properties: { count: { type: "integer" }, mode: { type: "string", enum: ["low", "high"] } },
+        required: ["count", "mode"], additionalProperties: false,
+      },
+    },
+  });
+
+  test.each([
+    { label: "string where integer is declared", argumentsJson: '{"count":"17","mode":"high"}' },
+    { label: "value outside the enum", argumentsJson: '{"count":17,"mode":"max"}' },
+    { label: "missing required field", argumentsJson: '{"count":17}' },
+    { label: "undeclared extra field", argumentsJson: '{"count":17,"mode":"high","extra":true}' },
+  ])(`rejects strict-tool arguments that violate the declared schema (stream=${stream}, $label)`, async ({ argumentsJson }) => {
+    expectFailure(await request(stream, [native(argumentsJson), done()], { tools: [typed(true)] }), stream);
+  });
+
+  test(`passes strict-tool arguments that conform to the declared schema (stream=${stream})`, async () => {
+    const response = await request(stream, [native('{"count":17,"mode":"high"}'), done()], { tools: [typed(true)] });
+    expect(response.status).toBe(200);
+    expect(response.body).toContain('"tool_calls"');
+  });
+
+  test(`does not enforce schemas for non-strict tools, matching OpenAI semantics (stream=${stream})`, async () => {
+    const argumentsJson = '{"count":"17","mode":"max"}';
+    const response = await request(stream, [native(argumentsJson), done()], { tools: [typed(false)] });
+    expect(response.status).toBe(200);
+    if (stream) {
+      const chunks = response.body.split("\n\n").filter(frame => frame && frame !== "data: [DONE]").map(frame => JSON.parse(frame.slice(6)));
+      const streamed = chunks.flatMap(chunk => chunk.choices ?? []).flatMap(choice => choice.delta?.tool_calls ?? []).map(call => call.function.arguments ?? "").join("");
+      expect(streamed).toBe(argumentsJson);
+      expect(response.body).toEndWith("data: [DONE]\n\n");
+    } else {
+      expect(JSON.parse(response.body).choices[0].message.tool_calls[0].function.arguments).toBe(argumentsJson);
+    }
+  });
+
   test.each(["auto", "none"])(`keeps XML examples literal when tools are not required (stream=${stream}, %s)`, async tool_choice => {
     const response = await request(stream, [{ type: "text", text: xml }, done(StopReason.STOP_PATTERN)], { tool_choice });
     expect(response.status).toBe(200);

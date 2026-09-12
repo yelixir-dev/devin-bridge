@@ -93,6 +93,15 @@ test.each([
   expect(result.frames).not.toContain("data: [DONE]\n\n");
 });
 
+test("reports an upstream newline-limit stop as truncation rather than an unsupported error", async () => {
+  // Given text output that upstream ended with StopReason.MAX_NEWLINES.
+  const result = await render([{ type: "text", text: "line 1\nline 2\n" }, { type: "done", stopReason: 5, usage: null }]);
+  // When rendered as OpenAI chunks, then the completion finishes as length-limited and terminates normally.
+  expect(result.chunks.at(-1)?.choices?.[0]?.finish_reason).toBe("length");
+  expect(result.chunks.some(c => c.error)).toBe(false);
+  expect(result.frames.at(-1)).toBe("data: [DONE]\n\n");
+});
+
 test("preserves upstream failure after a partial tool call", async () => {
   async function* source(): AsyncGenerator<ChatEvent> {
     yield call("call_a", "first", '{"x":');

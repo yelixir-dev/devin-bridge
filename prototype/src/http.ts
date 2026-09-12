@@ -1,8 +1,8 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
-import type { ChatEvent, DiscoveredModel, Usage } from "./devin-rpc.ts";
+import type { ChatEvent, DiscoveredModel } from "./devin-rpc.ts";
 import { UpstreamError } from "./connect.ts";
-import { finishReason, openaiStream, openaiUsage, publicError, ToolCallAccumulator, type ToolCallPolicy } from "./openai.ts";
+import { CompletionState, openaiStream, openaiUsage, publicError, type CompletionStep, type ToolCallPolicy } from "./openai.ts";
 
 const sweEffort = z.enum(["medium", "high", "max"]);
 const sweVariants = {
@@ -154,7 +154,9 @@ export function createHandler(backend: Backend, apiKey: string) {
     const signal = AbortSignal.any([request.signal, controller.signal]);
     const identity = { id: `chatcmpl-${crypto.randomUUID()}`, model: input.model, created: Math.floor(Date.now() / 1000) };
     const toolPolicy: ToolCallPolicy = {
-      names: (input.tools ?? []).map(tool => tool.function.name),
+      tools: (input.tools ?? []).map(tool => ({
+        name: tool.function.name, strict: tool.function.strict ?? false, parameters: tool.function.parameters,
+      })),
       choice: typeof input.tool_choice === "object" ? { name: input.tool_choice.function.name } : input.tool_choice ?? "auto",
     };
     try {
@@ -187,30 +189,27 @@ export function createHandler(backend: Backend, apiKey: string) {
           "Cache-Control": "no-store", "X-Accel-Buffering": "no",
         } });
       }
-      let text = "";
-      const toolCalls = new ToolCallAccumulator(toolPolicy);
-      let usage: Usage | null = null;
-      let reason: ReturnType<typeof finishReason> | undefined;
+      const state = new CompletionState(toolPolicy);
+      let done: Extract<CompletionStep, { kind: "done" }> | undefined;
       for await (const event of events()) {
-        switch (event.type) {
-          case "text": text += event.text; break;
-          case "thinking": break;
-          case "toolcall": toolCalls.update(event.toolCalls); break;
-          case "usage": usage = event.usage; break;
-          case "done": reason = finishReason(event.stopReason); usage = event.usage ?? usage; break;
-          default: { const unhandled: never = event; throw unhandled; }
+        const step = state.apply(event);
+        switch (step.kind) {
+          case "text":
+          case "tool_calls":
+          case "ignored": break;
+          case "done": done = step; break;
+          default: { const unhandled: never = step; throw unhandled; }
         }
       }
-      if (!reason) throw new UpstreamError("empty_response");
-      const completedTools = toolCalls.finish(reason);
-      if (!text && reason === "stop") throw new UpstreamError("empty_response");
+      if (!done) throw new UpstreamError("protocol_error"); // Ended without a terminal event: same failure as SSE.
+      const text = state.content;
       return Response.json({
         ...identity, object: "chat.completion",
         choices: [{ index: 0, message: {
-          role: "assistant", content: completedTools.length && !text ? null : text,
-          ...(completedTools.length ? { tool_calls: completedTools } : {}),
-        }, finish_reason: reason }],
-        ...(usage ? { usage: openaiUsage(usage) } : {}),
+          role: "assistant", content: done.toolCalls.length && !text ? null : text,
+          ...(done.toolCalls.length ? { tool_calls: done.toolCalls } : {}),
+        }, finish_reason: done.reason }],
+        ...(done.usage ? { usage: openaiUsage(done.usage) } : {}),
       });
     } catch (error) {
       controller.abort();
