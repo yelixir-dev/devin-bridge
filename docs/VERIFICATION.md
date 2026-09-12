@@ -324,6 +324,30 @@ tokens, all 3,000 lines with `finish_reason: "stop"` and a normal `[DONE]`.
 
 The build identity was raised to `devin-bridge-0.3.0`.
 
+## Streamed tool structure, effort routing, and proxy visibility
+
+With `devin-bridge-0.3.0` confirmed remotely, the 3,000-line generation that had
+failed at 91 s completed there in 161 s (14,329 output tokens, normal stop). A
+fourth scenario set then checked streamed tool-call structure through OmO:
+
+| Scenario | Result |
+| --- | --- |
+| Four parallel calls in one streamed turn | Pass: 4 distinct indices and IDs; per-index deltas reassemble to the final arguments |
+| Text, then a tool call, in one streamed turn | Pass: exact sentence, text before the call, `toolUse` stop |
+| 300-line `write_file` argument streamed (611 deltas) | Pass: byte-exact content |
+| `reasoning_effort` medium / high: response `model` shows the variant | **Fail: `model` was `swe-2`** for both |
+| `reasoning_effort` max | **Fail: the client sent `high`** |
+
+Neither failure is a bridge routing defect. The remote proxy rewrites the
+response `model` to the requested alias, which hides the variant the bridge
+selected (its fixtures assert the concrete variant on every chunk). And pi-ai
+clamps `max` to `high` unless the model entry declares a `thinkingLevelMap`
+with `"max": "max"`; the request never carried `max`. Two changes follow:
+`system_fingerprint` is now `devin-bridge-<version>/<resolved model>`, which
+the proxy passes through, so routing is observable from outside; and the README
+documents the client-side map needed to reach `swe-2-max`. The build identity
+was raised to `devin-bridge-0.4.0`.
+
 ## Reproduce
 
 Follow the [README](../README.md) to start the service and make an authorized
