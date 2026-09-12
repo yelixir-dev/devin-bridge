@@ -138,6 +138,55 @@ test("preserves native controls, escapes, and parser flags through compressed Co
   } finally { await server.stop(true); }
 });
 
+function pacedResponse(frames: readonly Buffer[], gapMs: number) {
+  return new Response(new ReadableStream<Uint8Array>({
+    async start(controller) {
+      for (const [index, chunk] of frames.entries()) {
+        if (index > 0) await Bun.sleep(gapMs);
+        controller.enqueue(chunk);
+      }
+      controller.close();
+    },
+  }));
+}
+
+function textFrame(text: string) {
+  return frame(0, GetChatMessageResponseSchema.encode(GetChatMessageResponseSchema.create({ deltaText: text, actualModelUid: "swe-2-medium" })));
+}
+
+test("keeps a slowly progressing stream open longer than the idle window", async () => {
+  // Given upstream frames that keep arriving, each gap shorter than the idle window but the total far longer.
+  const frames = [...Array.from({ length: 8 }, (_, i) => textFrame(`line ${i}\n`)), frame(2, Buffer.from("{}"))];
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => pacedResponse(frames, 60) });
+  try {
+    // When the stream is consumed with a 250 ms idle window (total duration about 480 ms).
+    const events = await Array.fromAsync(streamChat({
+      apiKey: "test-session", userJwt: "test-user-jwt", baseUrl: server.url.origin, modelUid: "swe-2-medium",
+      messages: [{ source: SOURCE.USER, text: "test" }], idleTimeoutMs: 250,
+    }));
+    // Then every frame is delivered and the stream ends normally; progress, not total time, governs the deadline.
+    expect(events.filter(e => e.type === "text").length).toBe(8);
+    expect(events.at(-1)?.type).toBe("done");
+  } finally { await server.stop(true); }
+});
+
+test("aborts with deadline_exceeded when upstream stalls beyond the idle window", async () => {
+  // Given one frame followed by a stall much longer than the idle window.
+  const frames = [textFrame("partial"), frame(2, Buffer.from("{}"))];
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => pacedResponse(frames, 3000) });
+  try {
+    const started = performance.now();
+    // When the consumer waits with a 200 ms idle window.
+    const completion = Array.fromAsync(streamChat({
+      apiKey: "test-session", userJwt: "test-user-jwt", baseUrl: server.url.origin, modelUid: "swe-2-medium",
+      messages: [{ source: SOURCE.USER, text: "test" }], idleTimeoutMs: 200,
+    }));
+    // Then it fails as a deadline instead of waiting for the stalled upstream.
+    await expect(completion).rejects.toMatchObject({ code: "deadline_exceeded" });
+    expect(performance.now() - started).toBeLessThan(2000);
+  } finally { await server.stop(true); }
+});
+
 test("rejects an upstream-reported model substitution", async () => {
   // Given a response reporting a model different from the explicitly requested one.
   const payload = GetChatMessageResponseSchema.encode(GetChatMessageResponseSchema.create({

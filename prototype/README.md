@@ -60,7 +60,8 @@ additionally checked against their JSON Schema (`type`, `required`, `enum`,
 JSON and SSE share one completion validator; a stream without a terminal event
 is a `protocol_error` on both, and a newline-limit stop reports `length`.
 The user JWT is cached per credential and refreshed before its `exp` claim.
-Request bodies up to 16 MB are accepted; larger bodies return 413.
+Request bodies up to 16 MB are accepted; larger bodies return 413. Upstream
+streams time out only after 120 s without a frame; there is no total deadline.
 Responses carry `system_fingerprint: "devin-bridge-<version>"` and `/health`
 reports the same `version`, so a deployment can be verified through a proxy.
 

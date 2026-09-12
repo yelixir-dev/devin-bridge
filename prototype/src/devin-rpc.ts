@@ -74,11 +74,16 @@ export type ChatEvent =
   | { readonly type: "usage"; readonly usage: Usage }
   | { readonly type: "done"; readonly stopReason: number; readonly usage: Usage | null };
 
+// A fixed total deadline cut a healthy 3,000-line generation at 91 s; progress, not elapsed time, is the signal.
+const DEFAULT_IDLE_TIMEOUT_MS = 120_000;
+
 export async function* streamChat(p: ChatParams): AsyncGenerator<ChatEvent> {
   const controller = new AbortController();
-  const signal = AbortSignal.any([
-    controller.signal, AbortSignal.timeout(90_000), ...(p.signal ? [p.signal] : []),
-  ]);
+  const signal = AbortSignal.any([controller.signal, ...(p.signal ? [p.signal] : [])]);
+  const idleTimeoutMs = p.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
+  let idle = false;
+  const stalled = () => { idle = true; controller.abort(); };
+  let idleTimer = setTimeout(stalled, idleTimeoutMs);
   try {
     const response = await fetch(`${p.baseUrl}/exa.api_server_pb.ApiServerService/GetChatMessage`, {
       method: "POST",
@@ -92,6 +97,8 @@ export async function* streamChat(p: ChatParams): AsyncGenerator<ChatEvent> {
     let stopReason = 0;
     let usage: Usage | null = null;
     for await (const payload of readFrames(response)) {
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(stalled, idleTimeoutMs);
       let message: ReturnType<typeof GetChatMessageResponseSchema.decode>;
       try {
         message = GetChatMessageResponseSchema.decode(payload);
@@ -116,7 +123,11 @@ export async function* streamChat(p: ChatParams): AsyncGenerator<ChatEvent> {
       if (message.stopReason) stopReason = message.stopReason;
     }
     yield { type: "done", stopReason, usage };
+  } catch (error) {
+    if (idle) throw new UpstreamError("deadline_exceeded", 504);
+    throw error;
   } finally {
+    clearTimeout(idleTimer);
     controller.abort(); // Also cancels upstream when a consumer stops reading.
   }
 }

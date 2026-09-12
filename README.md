@@ -215,6 +215,10 @@ on both surfaces, and an upstream newline-limit stop is reported as
 
 Request bodies up to **16 MB** are accepted so a conversation approaching the
 262k-token context is not rejected; larger bodies return 413 before inference.
+An upstream stream is abandoned only when it sends nothing for **120 seconds**
+(`deadline_exceeded`); there is no fixed total deadline, so a long generation
+that keeps producing frames is never cut short by the bridge. Closing the client
+connection still cancels the upstream request.
 Every completion and SSE chunk carries `system_fingerprint: "devin-bridge-<version>"`
 (the version in `prototype/package.json`), so the build that answered can be
 confirmed through any intermediate proxy.

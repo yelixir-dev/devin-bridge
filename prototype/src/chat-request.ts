@@ -59,6 +59,8 @@ export interface ChatParams {
   readonly stop?: readonly string[];
   readonly identity?: Identity;
   readonly signal?: AbortSignal;
+  /** Abort when upstream sends no frame for this long; total duration is bounded only by the caller. */
+  readonly idleTimeoutMs?: number;
 }
 
 export function encodeChatRequest(p: ChatParams): Uint8Array {
