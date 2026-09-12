@@ -213,6 +213,8 @@ validator, so a stream that ends without a terminal event is a `protocol_error`
 on both surfaces, and an upstream newline-limit stop is reported as
 `finish_reason: "length"`.
 
+Request bodies up to **16 MB** are accepted so a conversation approaching the
+262k-token context is not rejected; larger bodies return 413 before inference.
 Every completion and SSE chunk carries `system_fingerprint: "devin-bridge-<version>"`
 (the version in `prototype/package.json`), so the build that answered can be
 confirmed through any intermediate proxy.

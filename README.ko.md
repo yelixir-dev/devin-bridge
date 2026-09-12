@@ -207,6 +207,8 @@ OpenAI 의미 그대로 인자를 변경 없이 전달한다. JSON과 SSE는 하
 공유하므로, 종료 이벤트 없이 끝난 스트림은 두 표면 모두 `protocol_error`가 되고
 업스트림의 줄 수 제한 종료는 `finish_reason: "length"`로 보고한다.
 
+요청 본문은 **16 MB**까지 받으므로 262k 토큰 컨텍스트에 가까운 대화도 거부되지 않는다.
+그보다 큰 본문은 추론 전에 413을 반환한다.
 모든 응답과 SSE 청크에는 `system_fingerprint: "devin-bridge-<version>"`이 포함된다
 (`prototype/package.json`의 version). 중간 프록시를 거쳐도 어떤 빌드가 응답했는지
 확인할 수 있다.

@@ -5,6 +5,8 @@ import { UpstreamError } from "./connect.ts";
 import { CompletionState, openaiStream, openaiUsage, publicError, type CompletionStep, type ToolCallPolicy } from "./openai.ts";
 import { BRIDGE_VERSION } from "./version.ts";
 
+// A 262k-token history can exceed 512 KB of JSON; a real 700 KB tool result was rejected with 413 before this.
+export const MAX_REQUEST_BODY_BYTES = 16 * 1024 * 1024;
 const sweEffort = z.enum(["medium", "high", "max"]);
 const sweVariants = {
   medium: "swe-2-medium", high: "swe-2-high", max: "swe-2-max",

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { createHandler } from "./http.ts";
+import { createHandler, MAX_REQUEST_BODY_BYTES } from "./http.ts";
 import { createUserJwtCache } from "./auth.ts";
 import { loadApiKey, loadApiServerUrl } from "./creds.ts";
 import { discoverModels, getUserJwt, SOURCE, streamChat, DEVIN_DEFAULT_BASE_URL } from "./devin-rpc.ts";
@@ -12,7 +12,7 @@ const baseUrl = loadApiServerUrl() ?? DEVIN_DEFAULT_BASE_URL;
 const models = await discoverModels(token, baseUrl);
 const userJwt = createUserJwtCache({ fetchJwt: () => getUserJwt(token, baseUrl) });
 const server = Bun.serve({
-  hostname: "127.0.0.1", port, idleTimeout: 120, maxRequestBodySize: 512 * 1024,
+  hostname: "127.0.0.1", port, idleTimeout: 120, maxRequestBodySize: MAX_REQUEST_BODY_BYTES,
   fetch: createHandler({
     models,
     async *complete(input, signal) {
