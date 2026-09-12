@@ -219,9 +219,19 @@ An upstream stream is abandoned only when it sends nothing for **120 seconds**
 (`deadline_exceeded`); there is no fixed total deadline, so a long generation
 that keeps producing frames is never cut short by the bridge. Closing the client
 connection still cancels the upstream request.
-Every completion and SSE chunk carries `system_fingerprint: "devin-bridge-<version>"`
-(the version in `prototype/package.json`), so the build that answered can be
-confirmed through any intermediate proxy.
+Every completion and SSE chunk carries
+`system_fingerprint: "devin-bridge-<version>/<resolved model>"` (the version in
+`prototype/package.json` plus the concrete variant such as `swe-2-medium`).
+Proxies commonly rewrite the response `model` to the requested alias but pass
+this field through, so both the deployed build and the routed variant can be
+confirmed from outside.
+
+pi-ai/OmO clients clamp `max` to `high` unless the model entry declares the
+tier. To reach `swe-2-max`, add this to the model in `models.json`:
+
+```json
+"thinkingLevelMap": { "off": null, "minimal": null, "low": null, "medium": "medium", "high": "high", "xhigh": null, "max": "max" }
+```
 
 | Environment variable | Required | Behavior |
 | --- | --- | --- |

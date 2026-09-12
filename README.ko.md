@@ -212,9 +212,18 @@ OpenAI 의미 그대로 인자를 변경 없이 전달한다. JSON과 SSE는 하
 업스트림 스트림은 **120초** 동안 아무 프레임도 오지 않을 때만 중단한다(`deadline_exceeded`).
 고정된 총 시간 제한이 없으므로 프레임을 계속 보내는 긴 생성은 브리지가 끊지 않는다.
 클라이언트가 연결을 닫으면 업스트림 요청도 취소된다.
-모든 응답과 SSE 청크에는 `system_fingerprint: "devin-bridge-<version>"`이 포함된다
-(`prototype/package.json`의 version). 중간 프록시를 거쳐도 어떤 빌드가 응답했는지
-확인할 수 있다.
+모든 응답과 SSE 청크에는
+`system_fingerprint: "devin-bridge-<version>/<resolved model>"`이 포함된다
+(`prototype/package.json`의 version과 `swe-2-medium` 같은 실제 변형).
+프록시는 응답의 `model`을 요청한 별칭으로 바꾸는 경우가 많지만 이 필드는 그대로
+전달하므로, 배포된 빌드와 라우팅된 변형을 바깥에서 확인할 수 있다.
+
+pi-ai/OmO 클라이언트는 모델 항목이 해당 티어를 선언하지 않으면 `max`를 `high`로
+낮춘다. `swe-2-max`를 쓰려면 `models.json`의 모델 항목에 다음을 추가한다.
+
+```json
+"thinkingLevelMap": { "off": null, "minimal": null, "low": null, "medium": "medium", "high": "high", "xhigh": null, "max": "max" }
+```
 
 | 환경변수 | 필수 여부 | 동작 |
 | --- | --- | --- |

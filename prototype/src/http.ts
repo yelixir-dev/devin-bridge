@@ -157,7 +157,8 @@ export function createHandler(backend: Backend, apiKey: string) {
     const signal = AbortSignal.any([request.signal, controller.signal]);
     const identity = {
       id: `chatcmpl-${crypto.randomUUID()}`, model: input.model, created: Math.floor(Date.now() / 1000),
-      system_fingerprint: `devin-bridge-${BRIDGE_VERSION}`, // Lets operators confirm which build answered through any proxy.
+      // Build plus concrete variant: proxies rewrite `model` to the requested alias, but pass this field through.
+      system_fingerprint: `devin-bridge-${BRIDGE_VERSION}/${input.model}`,
     };
     const toolPolicy: ToolCallPolicy = {
       tools: (input.tools ?? []).map(tool => ({
