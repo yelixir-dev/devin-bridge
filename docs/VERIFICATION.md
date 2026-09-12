@@ -267,6 +267,35 @@ and SSE chunks now carry `system_fingerprint: "devin-bridge-<version>"` and
 `/health` reports `version`; a test keeps the runtime constant equal to
 `package.json`. The 191-test suite, type check, diagnostics and build passed.
 
+## Extended live scenarios and the request-size limit
+
+With the remote build confirmed as `devin-bridge-0.1.0`, a second scenario set
+targeted transport limits rather than tool semantics. All requests went through
+the installed OmO runtime to the remote gateway with real inference:
+
+| Scenario | Result |
+| --- | --- |
+| 60-message history; call a tool with the token from the 7th exchange | Pass (2,436 input tokens) |
+| 150 KB tool result; return the receipt for a given id among 3,000 | Pass (94k tokens over two turns) |
+| 700 KB tool result; return the embedded needle | **413 from the bridge** behind the proxy |
+| `max_tokens: 16` on a long answer | Pass; `stopReason: "length"` |
+| 120 exact lines with `max_tokens: 4096`, streamed | Pass; 120 lines, normal stop |
+| 60 declared tools; call the 38th with exact arguments | Pass |
+| Tool result with quotes, backslashes, tabs, newlines, Unicode, markup | Pass |
+| 60 KB system prompt containing the key to use | Pass (11k tokens) |
+| Six simultaneous completions with distinct nonces | Pass; 6 of 6 returned 200 with their own nonce in 11.4 s |
+
+The 413 came from the bridge's `maxRequestBodySize` of 512 KB, which a single
+large tool result exceeds long before the 262k-token context is reached. The
+limit is now 16 MB, exported as one constant so the server and the tests share
+it. Red tests recorded the 700 KB rejection; afterward the fixture suite accepts
+700 KB and still returns 413 above the limit. The same 700 KB conversation was
+then sent through the patched local bridge to the real upstream: HTTP 200,
+129,686 prompt tokens, the needle returned exactly, in 17 seconds.
+
+The build identity was raised to `devin-bridge-0.2.0` so the deployment that
+carries this limit can be distinguished from outside the proxy.
+
 ## Reproduce
 
 Follow the [README](../README.md) to start the service and make an authorized
