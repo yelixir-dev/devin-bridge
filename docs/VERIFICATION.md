@@ -348,6 +348,15 @@ the proxy passes through, so routing is observable from outside; and the README
 documents the client-side map needed to reach `swe-2-max`. The build identity
 was raised to `devin-bridge-0.4.0`.
 
+After that deployment and the client-side `thinkingLevelMap`, the remote gateway
+returned `system_fingerprint: "devin-bridge-0.4.0/swe-2-high"` for a default
+request, and the three effort checks passed: `medium`, `high` and `max` each
+produced a fingerprint ending in the matching variant, with `max` now actually
+carried on the wire. A fourth run of the baseline 20-check suite on this build
+passed 19 of 20 (38 of 38 HTTP 200, 286 s, 23,508 tokens); the only failure was
+again the 64-line NUL case in the known upstream class. No bridge change was
+needed from this iteration.
+
 ## Reproduce
 
 Follow the [README](../README.md) to start the service and make an authorized
