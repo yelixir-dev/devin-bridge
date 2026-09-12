@@ -296,6 +296,34 @@ then sent through the patched local bridge to the real upstream: HTTP 200,
 The build identity was raised to `devin-bridge-0.2.0` so the deployment that
 carries this limit can be distinguished from outside the proxy.
 
+## Streaming teardown and the total-deadline defect
+
+With `devin-bridge-0.2.0` confirmed on the remote gateway, the 700 KB case that
+had returned 413 passed there (129,701 prompt tokens, 20 s). A third scenario set
+then targeted stream lifetimes:
+
+| Scenario | Result |
+| --- | --- |
+| Client aborts a 300-line stream after five text deltas, then sends a normal request | Pass: abort honored, next request answered normally |
+| 1,600-line generation (7,336 output tokens) | Pass in 83 s, normal stop |
+| 3,000-line generation (about 13.7k output tokens) | **Fail at 91 s**: `deadline_exceeded` after 1,743 lines had already streamed |
+
+The failure was the bridge's own `AbortSignal.timeout(90_000)` around the whole
+upstream stream: a healthy generation was cut off purely for taking longer than
+90 seconds. The transport now uses an idle window instead. The timer restarts on
+every upstream frame (default 120 s, injectable for tests) and an idle abort is
+reported as `deadline_exceeded`; there is no fixed total deadline, and a client
+disconnect still cancels upstream. Red tests recorded a stalled fixture being
+waited out and `idleTimeoutMs` being unknown; afterward a paced stream longer
+than the window completes, a stalled stream fails within the window, and all 196
+tests, type checking, diagnostics and the build passed.
+
+The same 3,000-line request was then streamed through the patched local bridge to
+the real upstream: HTTP 200, 145 seconds, 14,003 SSE chunks, 14,201 completion
+tokens, all 3,000 lines with `finish_reason: "stop"` and a normal `[DONE]`.
+
+The build identity was raised to `devin-bridge-0.3.0`.
+
 ## Reproduce
 
 Follow the [README](../README.md) to start the service and make an authorized
