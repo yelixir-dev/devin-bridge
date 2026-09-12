@@ -60,6 +60,8 @@ additionally checked against their JSON Schema (`type`, `required`, `enum`,
 JSON and SSE share one completion validator; a stream without a terminal event
 is a `protocol_error` on both, and a newline-limit stop reports `length`.
 The user JWT is cached per credential and refreshed before its `exp` claim.
+Responses carry `system_fingerprint: "devin-bridge-<version>"` and `/health`
+reports the same `version`, so a deployment can be verified through a proxy.
 
 ```sh
 bun run typecheck

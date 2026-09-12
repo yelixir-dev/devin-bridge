@@ -109,7 +109,7 @@ benchmark. Set `stream` to `false` to receive one JSON completion instead.
 
 | Endpoint | Authentication | Result |
 | --- | --- | --- |
-| `GET /health` | None | Local service status and transport |
+| `GET /health` | None | Local service status, bridge `version`, and transport |
 | `GET /v1/models` | Client Bearer key | Enabled models, with SWE-2 variants grouped |
 | `POST /v1/chat/completions` | Client Bearer key | Text and function-tool completion as JSON or SSE |
 
@@ -212,6 +212,10 @@ OpenAI semantics and are forwarded unchanged. JSON and SSE share one completion
 validator, so a stream that ends without a terminal event is a `protocol_error`
 on both surfaces, and an upstream newline-limit stop is reported as
 `finish_reason: "length"`.
+
+Every completion and SSE chunk carries `system_fingerprint: "devin-bridge-<version>"`
+(the version in `prototype/package.json`), so the build that answered can be
+confirmed through any intermediate proxy.
 
 | Environment variable | Required | Behavior |
 | --- | --- | --- |

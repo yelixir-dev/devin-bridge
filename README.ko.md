@@ -107,7 +107,7 @@ OK
 
 | 엔드포인트 | 인증 | 결과 |
 | --- | --- | --- |
-| `GET /health` | 없음 | 로컬 서비스 상태와 전송 방식 |
+| `GET /health` | 없음 | 로컬 서비스 상태, 브리지 `version`, 전송 방식 |
 | `GET /v1/models` | 클라이언트 Bearer 키 | 활성 모델 목록. SWE-2 변형은 하나로 통합 |
 | `POST /v1/chat/completions` | 클라이언트 Bearer 키 | JSON 또는 SSE 텍스트·함수 도구 응답 |
 
@@ -206,6 +206,10 @@ XML 텍스트를 실행 가능한 호출로 승격하지 않으며, `auto`나 `n
 OpenAI 의미 그대로 인자를 변경 없이 전달한다. JSON과 SSE는 하나의 완료 검증기를
 공유하므로, 종료 이벤트 없이 끝난 스트림은 두 표면 모두 `protocol_error`가 되고
 업스트림의 줄 수 제한 종료는 `finish_reason: "length"`로 보고한다.
+
+모든 응답과 SSE 청크에는 `system_fingerprint: "devin-bridge-<version>"`이 포함된다
+(`prototype/package.json`의 version). 중간 프록시를 거쳐도 어떤 빌드가 응답했는지
+확인할 수 있다.
 
 | 환경변수 | 필수 여부 | 동작 |
 | --- | --- | --- |

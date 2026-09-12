@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { ChatEvent, DiscoveredModel } from "./devin-rpc.ts";
 import { UpstreamError } from "./connect.ts";
 import { CompletionState, openaiStream, openaiUsage, publicError, type CompletionStep, type ToolCallPolicy } from "./openai.ts";
+import { BRIDGE_VERSION } from "./version.ts";
 
 const sweEffort = z.enum(["medium", "high", "max"]);
 const sweVariants = {
@@ -110,7 +111,7 @@ export function createHandler(backend: Backend, apiKey: string) {
     if (!["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)) return failure("invalid_host", 403);
     if (request.headers.has("origin")) return failure("browser_origin_denied", 403);
     if (request.method === "GET" && url.pathname === "/health") {
-      return Response.json({ status: "ok", transport: "direct-connect-rpc", model_fallback: false });
+      return Response.json({ status: "ok", version: BRIDGE_VERSION, transport: "direct-connect-rpc", model_fallback: false });
     }
     const provided = request.headers.get("authorization")?.replace(/^Bearer /, "") ?? "";
     if (!timingSafeEqual(expectedKey, createHash("sha256").update(provided).digest())) {
@@ -152,7 +153,10 @@ export function createHandler(backend: Backend, apiKey: string) {
     if (!models.some(m => m.uid === input.model)) return failure("model_not_found", 404);
     const controller = new AbortController();
     const signal = AbortSignal.any([request.signal, controller.signal]);
-    const identity = { id: `chatcmpl-${crypto.randomUUID()}`, model: input.model, created: Math.floor(Date.now() / 1000) };
+    const identity = {
+      id: `chatcmpl-${crypto.randomUUID()}`, model: input.model, created: Math.floor(Date.now() / 1000),
+      system_fingerprint: `devin-bridge-${BRIDGE_VERSION}`, // Lets operators confirm which build answered through any proxy.
+    };
     const toolPolicy: ToolCallPolicy = {
       tools: (input.tools ?? []).map(tool => ({
         name: tool.function.name, strict: tool.function.strict ?? false, parameters: tool.function.parameters,
