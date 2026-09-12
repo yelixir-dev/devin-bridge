@@ -181,6 +181,22 @@ Read `delta.tool_calls` in SSE or `message.tool_calls` in JSON. The completion
 finishes with `finish_reason: "tool_calls"`. Reassemble argument fragments by
 their stable `index`; each new call provides its `id` and function name.
 
+The bridge rejects undeclared or forbidden native calls, a different named
+choice, upstream parser-error/custom payloads, incomplete JSON, and mismatched
+tool-call stop reasons with `invalid_tool_call`. A normal `stop` without a
+native call also fails when `required` or a named choice was requested.
+JSON errors return 502; an already-open SSE response emits an error without
+`[DONE]`. Wait for a valid terminal result before executing a streamed call.
+Upstream length/content-filter interruptions remain interruptions, not invented
+calls.
+
+XML text is never promoted into executable calls; under `auto` or `none` it
+remains text. Native argument strings preserve their bytes, including control
+characters and literal escapes. The bridge cannot detect or reconstruct a
+semantically wrong but valid JSON string generated upstream, and does not
+globally unescape arguments. See the [verification record](docs/VERIFICATION.md)
+for observed string-fidelity failures and their limits.
+
 **Your client executes the function.** Append the returned assistant message
 with its original `tool_calls`, then a `role: "tool"` message whose
 `tool_call_id` matches the call ID and whose `content` contains the result.

@@ -2,7 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import type { ChatEvent, DiscoveredModel, Usage } from "./devin-rpc.ts";
 import { UpstreamError } from "./connect.ts";
-import { finishReason, openaiStream, openaiUsage, publicError, ToolCallAccumulator } from "./openai.ts";
+import { finishReason, openaiStream, openaiUsage, publicError, ToolCallAccumulator, type ToolCallPolicy } from "./openai.ts";
 
 const sweEffort = z.enum(["medium", "high", "max"]);
 const sweVariants = {
@@ -153,6 +153,10 @@ export function createHandler(backend: Backend, apiKey: string) {
     const controller = new AbortController();
     const signal = AbortSignal.any([request.signal, controller.signal]);
     const identity = { id: `chatcmpl-${crypto.randomUUID()}`, model: input.model, created: Math.floor(Date.now() / 1000) };
+    const toolPolicy: ToolCallPolicy = {
+      names: (input.tools ?? []).map(tool => tool.function.name),
+      choice: typeof input.tool_choice === "object" ? { name: input.tool_choice.function.name } : input.tool_choice ?? "auto",
+    };
     try {
       const iterator = backend.complete(input, signal)[Symbol.asyncIterator]();
       const first = await iterator.next(); // Early upstream errors retain their HTTP status.
@@ -170,7 +174,7 @@ export function createHandler(backend: Backend, apiKey: string) {
         }
       }
       if (input.stream) {
-        const output = openaiStream(events(), identity, input.stream_options?.include_usage ?? false);
+        const output = openaiStream(events(), identity, input.stream_options?.include_usage ?? false, toolPolicy);
         return new Response(new ReadableStream<Uint8Array>({
           async pull(stream) {
             const next = await output.next();
@@ -184,7 +188,7 @@ export function createHandler(backend: Backend, apiKey: string) {
         } });
       }
       let text = "";
-      const toolCalls = new ToolCallAccumulator();
+      const toolCalls = new ToolCallAccumulator(toolPolicy);
       let usage: Usage | null = null;
       let reason: ReturnType<typeof finishReason> | undefined;
       for await (const event of events()) {
@@ -197,9 +201,9 @@ export function createHandler(backend: Backend, apiKey: string) {
           default: { const unhandled: never = event; throw unhandled; }
         }
       }
-      if (!reason || (!text && reason === "stop")) throw new UpstreamError("empty_response");
-      const completedTools = toolCalls.snapshot();
-      if (reason === "tool_calls" && !completedTools.length) throw new UpstreamError("invalid_tool_call");
+      if (!reason) throw new UpstreamError("empty_response");
+      const completedTools = toolCalls.finish(reason);
+      if (!text && reason === "stop") throw new UpstreamError("empty_response");
       return Response.json({
         ...identity, object: "chat.completion",
         choices: [{ index: 0, message: {

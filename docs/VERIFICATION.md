@@ -95,6 +95,88 @@ Regression coverage now includes:
 - Tool-only JSON/SSE responses, malformed arguments, and errors after partial
   tool output. The bridge never executes client tools.
 
+## Remote tool-call stress baseline
+
+A later run used the installed OmO ModelRuntime and its configured
+`yorha/swe-2` model without changing the endpoint, flattening user content, or
+substituting another model. All 38 primary requests used text-block arrays and
+returned HTTP 200. Eighteen of twenty checks passed, including:
+
+- Six parallel calls followed by results submitted in reverse order.
+- Five dependent steps whose next arguments used fresh random tool results.
+- Tool-error recovery and three independent tool-result round trips.
+- Typed/nested arguments, optional fields, no-tool instructions and a long
+  Unicode payload.
+
+The two first-run failures were retained. One response exposed an XML invocation
+as ordinary text instead of a native tool call. Another native call omitted six
+NUL characters from a mixed escaping/control-character argument.
+
+Three additional diagnostic requests did not replace those first outcomes.
+The short case passed on repeat; the repeated-string case failed again, this
+time by double-escaping quotes, backslashes and whitespace; the control with
+NUL removed passed. The remote SSE arguments already contained the same values
+as the final SDK arguments. This rules out SDK delta assembly for that observed
+corruption, but does not by itself isolate the inference model from an upstream
+tool parser.
+
+These 41 calls are a diagnostic sample, not a reliability estimate or proof
+that NUL always fails. Tool executors were simulated fixtures; the inference
+requests and result-consumption checks were real. No remote deployment was
+performed by the test runner.
+
+## Native RPC comparison
+
+The bridge-side investigation compared decoded `GetChatMessage` protobuf tool
+fragments with the HTTP accumulator, bypassing OmO and the remote proxy. Four
+fixed-model `swe-2-high` requests used the repeated mixed-control-character case:
+
+| Diagnostic request | Exact argument match | Raw fragments equal bridge arguments |
+| --- | --- | --- |
+| Existing defaults | Yes | Yes |
+| XML parsing experiment disabled | No | Yes |
+| Strict tool definition | Yes | Yes |
+| Named tool choice | No | Yes |
+
+The two failures were already double-escaped in native upstream tool arguments.
+The bridge accumulator did not introduce that escaping. The diagnostic
+experiment was not made a production default, and the isolated strict success
+is not proof that strict mode fixes string fidelity. Three additional local
+HTTP baseline calls (short, repeated, and no-NUL control) all passed, further
+showing that this is not a deterministic NUL rejection.
+
+The bridge must preserve valid argument bytes rather than globally unescaping
+strings or inventing missing characters. Text that merely describes an XML
+invocation must not automatically become an executable tool call.
+
+## Tool-response contract hardening
+
+The bridge now enforces declared names and required/named/none choices, rejects
+upstream invalid-parser/custom-tool flags, and checks complete native JSON against
+its terminal reason. JSON failures return 502 with `invalid_tool_call`; SSE
+failures emit an error without a successful terminal marker. XML examples remain
+literal text when a native call is not required.
+
+Before the guard, the new boundary suite recorded 9 passing and 19 failing
+tests: invalid responses returned JSON 200 or a successful SSE `[DONE]`.
+Afterward, all 118 tests passed, including wire fidelity for all C0 controls,
+Unicode and literal escapes. Type checking, diagnostics and the build passed.
+
+Post-patch live validation used a restarted local server and the real upstream:
+
+- Short mixed-control-character and repeated no-NUL requests passed.
+- The repeated NUL/escape request still returned a valid but double-escaped
+  string (450 UTF-16 units instead of 408). This is an unresolved upstream
+  semantic-fidelity failure, not a successful repair.
+- Installed OmO ModelRuntime completed a native `add_numbers(17, 25)` call and
+  consumed a correlated tool result containing 42 and a fresh random receipt.
+
+No heuristic string repair, XML-to-call conversion, retry, model fallback,
+experimental request mode, or strict-default change was introduced. This
+increment fixes false-success handling for detectable contract violations; it
+does not fix arbitrary upstream generation errors. Deploying the commit to a
+remote service is a separate operator action, followed by another live test.
+
 ## Reproduce
 
 Follow the [README](../README.md) to start the service and make an authorized

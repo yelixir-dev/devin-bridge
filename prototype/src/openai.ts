@@ -45,16 +45,29 @@ interface ToolDelta {
   readonly function: { readonly name?: string; readonly arguments?: string };
 }
 
-// Mutable per-completion state. Both JSON and SSE use the same byte-preserving accumulator.
+export interface ToolCallPolicy {
+  readonly names: readonly string[];
+  readonly choice: "auto" | "none" | "required" | { readonly name: string };
+}
+
+// Mutable per-completion state shared by JSON and SSE. Never repair argument values.
 export class ToolCallAccumulator {
   private readonly calls = new Map<string, { index: number; name: string; arguments: string }>();
   private activeId: string | undefined;
+
+  constructor(private readonly policy?: ToolCallPolicy) {}
 
   update(incoming: readonly ChatToolCall[]): readonly ToolDelta[] {
     const deltas: ToolDelta[] = [];
     for (const call of incoming) {
       const id = call.id || this.activeId;
-      if (!id || call.invalidJsonErr) throw new UpstreamError("invalid_tool_call");
+      if (!id || call.invalidJsonErr || call.invalidJsonStr || call.isCustomToolCall) {
+        throw new UpstreamError("invalid_tool_call");
+      }
+      if (this.policy && (this.policy.choice === "none" || (call.name && (
+        !this.policy.names.includes(call.name)
+        || (typeof this.policy.choice === "object" && call.name !== this.policy.choice.name)
+      )))) throw new UpstreamError("invalid_tool_call");
       const previous = this.calls.get(id);
       const state = previous ?? { index: this.calls.size, name: "", arguments: "" };
       if (state.name && call.name && state.name !== call.name) throw new UpstreamError("invalid_tool_call");
@@ -80,6 +93,16 @@ export class ToolCallAccumulator {
 
   get size(): number { return this.calls.size; }
 
+  finish(reason: ReturnType<typeof finishReason>): readonly OpenAIToolCall[] {
+    const calls = this.snapshot();
+    const required = this.policy?.choice === "required" || typeof this.policy?.choice === "object";
+    if ((calls.length > 0) !== (reason === "tool_calls")
+      || (reason === "stop" && required && !calls.length)) {
+      throw new UpstreamError("invalid_tool_call");
+    }
+    return calls;
+  }
+
   snapshot(): readonly OpenAIToolCall[] {
     return [...this.calls].map(([id, state]) => {
       if (!state.name) throw new UpstreamError("invalid_tool_call");
@@ -101,12 +124,13 @@ export async function* openaiStream(
   events: AsyncIterable<ChatEvent>,
   identity: { readonly id: string; readonly model: string; readonly created: number },
   includeUsage: boolean,
+  policy?: ToolCallPolicy,
 ): AsyncGenerator<string> {
   const chunk = { ...identity, object: "chat.completion.chunk" };
   yield sse({ ...chunk, choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] });
   let usage: Usage | null = null;
   let visible = false;
-  const tools = new ToolCallAccumulator();
+  const tools = new ToolCallAccumulator(policy);
   try {
     for await (const event of events) {
       switch (event.type) {
@@ -125,9 +149,7 @@ export async function* openaiStream(
         case "usage": usage = event.usage; break; // Snapshot, not an additive charge.
         case "done": {
           const reason = finishReason(event.stopReason);
-          if (reason === "tool_calls") {
-            if (!tools.snapshot().length) throw new UpstreamError("invalid_tool_call");
-          }
+          tools.finish(reason);
           if (!visible && reason === "stop") throw new UpstreamError("empty_response");
           yield sse({ ...chunk, choices: [{ index: 0, delta: {}, finish_reason: reason }] });
           usage = event.usage ?? usage;

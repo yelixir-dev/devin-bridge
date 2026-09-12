@@ -124,6 +124,27 @@ test("retains ordinary text request defaults and routing", () => {
   expect(request.configuration).toMatchObject({ maxTokens: 512n, numCompletions: 1n, temperature: 0.4 });
 });
 
+test("preserves control characters and literal escapes through native request fields", () => {
+  const text = `  한글 😀 "quoted" \\path\\\tTAB\nnewline\rreturn\u0000null literal \\n \\u0000 ${Array.from({ length: 32 }, (_, n) => String.fromCharCode(n)).join("")}  `;
+  const argumentsJson = JSON.stringify({ text });
+  const jsonSchemaString = JSON.stringify({ type: "object", properties: { text: { type: "string", const: text } } });
+  const input = {
+    ...base, systemPrompt: text,
+    messages: [
+      { source: SOURCE.USER, text },
+      { source: SOURCE.SYSTEM, text, toolCalls: [{ id: "store_0", name: "store", argumentsJson }] },
+      { source: SOURCE.TOOL, text, toolCallId: "store_0" },
+    ],
+    tools: [{ name: "store", description: text, jsonSchemaString, strict: true }],
+  } satisfies ChatParams;
+  const request = GetChatMessageRequestSchema.decode(encodeChatRequest(input));
+  expect(request.prompt).toBe(text);
+  expect(request.chatMessagePrompts.map(message => message.prompt)).toEqual([text, text, text]);
+  expect(request.chatMessagePrompts[1]?.toolCalls[0]?.argumentsJson).toBe(argumentsJson);
+  expect(request.tools[0]?.description).toBe(text);
+  expect(request.tools[0]?.jsonSchemaString).toBe(jsonSchemaString);
+});
+
 test("retains explicit text configuration overrides", () => {
   // Given existing optional fields, including zero temperature.
   const input = { ...base, systemPrompt: "system input", maxTokens: 123, temperature: 0, stop: ["custom-stop"] } satisfies ChatParams;

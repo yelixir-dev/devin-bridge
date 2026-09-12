@@ -49,6 +49,13 @@ sends the assistant call plus a correlated `role: "tool"` result on the next
 request. The bridge does not execute tools. See the [root README](../README.md)
 for the complete request/response contract.
 
+Tool-choice/declaration violations, parser-invalid/custom payloads, incomplete
+JSON and inconsistent native-tool termination fail with `invalid_tool_call`
+(JSON 502, or SSE error without `[DONE]`). Required/named calls cannot silently
+finish as normal text. XML examples remain text under auto/none. Argument bytes
+are preserved without heuristic unescaping; valid but semantically corrupted
+upstream strings cannot be reconstructed.
+
 ```sh
 bun run typecheck
 bun test tests

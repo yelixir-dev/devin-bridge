@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
 import { gunzipSync } from "node:zlib";
-import { GetChatMessageRequestSchema, GetChatMessageResponseSchema } from "../vendor/devin-proto.ts";
+import { ChatToolCallSchema, GetChatMessageRequestSchema, GetChatMessageResponseSchema } from "../vendor/devin-proto.ts";
 import { SOURCE, streamChat } from "../src/devin-rpc.ts";
+import { encodeFrame } from "../src/connect.ts";
 
 test("sends a CASCADE request rather than the obsolete GENERAL request", async () => {
   // Given a real HTTP seam decoding the independently sourced wire schema.
@@ -109,6 +110,32 @@ test.each([
   } finally {
     await server.stop(true);
   }
+});
+
+test("preserves native controls, escapes, and parser flags through compressed Connect frames", async () => {
+  const text = `  한글 😀 "quoted" \\path\\\tTAB\nnewline\rreturn\u0000null literal \\n \\u0000 ${Array.from({ length: 32 }, (_, n) => String.fromCharCode(n)).join("")}  `;
+  const toolCall = ChatToolCallSchema.create({
+    id: "store_0", name: "store", argumentsJson: JSON.stringify({ text }),
+    invalidJsonStr: text, invalidJsonErr: "fixture-parser-error", isCustomToolCall: true,
+  });
+  const payload = GetChatMessageResponseSchema.encode(GetChatMessageResponseSchema.create({
+    deltaText: text, deltaToolCalls: [toolCall], actualModelUid: "swe-2-medium", stopReason: 10,
+  }));
+  const bytes = Buffer.concat([encodeFrame(payload), frame(2, Buffer.from("{}"))]);
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch() {
+    return new Response(new ReadableStream<Uint8Array>({ start(controller) {
+      for (const byte of bytes) controller.enqueue(Uint8Array.of(byte));
+      controller.close();
+    } }));
+  } });
+  try {
+    const events = await consume(server.url.origin);
+    expect(events).toEqual([
+      { type: "text", text },
+      { type: "toolcall", toolCalls: [toolCall] },
+      { type: "done", stopReason: 10, usage: null },
+    ]);
+  } finally { await server.stop(true); }
 });
 
 test("rejects an upstream-reported model substitution", async () => {
